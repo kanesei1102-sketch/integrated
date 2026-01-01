@@ -187,24 +187,40 @@ if len(data_dict) >= 2:
                             sig_pairs.append({'g1': n1, 'g2': n2, 'label': get_sig_label(p_val), 'p': p_val})
 
     # レポート表示
+    # レポート表示
     st.success(f"**採用された手法: {method_name}**")
     
-    with st.expander("詳細な解析レポート (先生への説明用)"):
-        report = f"""
-        1. データ診断:
-           正規性: {'あり (パラメトリック)' if all_normal else 'なし (ノンパラメトリック)'}
-           等分散性: {'あり' if is_equal_var else 'なし'}
-        
-        2. 選択された検定: {method_name}
-           理由: データの分布とバラツキに基づき、最も妥当な手法を自動選択しました。
-           
-        3. 結果:
-           Global P-value: {p_global:.4e}
-           有意差のあるペア: {len(sig_pairs)} 組
-        """
-        st.text_area("レポート", report, height=200)
+    # 日本語の親切な解説ロジックを追加
+    if all_normal and is_equal_var:
+        easy_reason = "データの分布に偏りがなく、群ごとのバラツキも均一であったため、最も標準的で統計的パワーの強い『パラメトリック検定』を採用しました。" [cite: 1]
+    elif not all_normal:
+        easy_reason = "データに正規性が認められなかった（極端な偏りや外れ値がある）ため、数値の順位に基づき、外れ値の影響を受けにくい『ノンパラメトリック検定』を採用しました。" [cite: 1]
+    else:
+        easy_reason = "群の間でバラツキ（分散）に有意な差が認められたため、その差を補正して計算する手法（Welchの方法等）を採用しました。" [cite: 1]
 
-    st.divider()
+    result_summary = "【有意差あり】偶然とは言い切れない意味のある差が見つかりました。" if p_global < 0.05 else "【有意差なし】見られた差は誤差の範囲内である可能性が高いです。" [cite: 1]
+
+    with st.expander("📝 そのまま使える報告用レポート (詳細)", expanded=True):
+        full_report = f"""
+【解析報告書：{", ".join(group_names)} の比較】
+
+1. 解析の目的：
+   各グループ間の数値に、統計学的な「意味のある違い」が存在するかを確認しました。 
+
+2. 採用手法と選定理由：
+   採用手法：{method_name}
+   選定理由：{easy_reason}
+   ※ データの正規性および等分散性を自動診断した上で、最も科学的に妥当な手順を選択しています。 
+
+3. 解析結果：
+   判定：{result_summary}
+   全体のP値：{p_global:.4e}
+   （※P値が0.05未満であれば、統計学的に「差がある」と判断します） 
+
+4. 結論：
+   以上の解析に基づき、有意差ラベル（{", ".join(set(p['label'] for p in sig_pairs)) if sig_pairs else "ns"}）を付与したグラフを作成しました。この結果は論文やレポートのエビデンスとして活用可能です。 
+        """
+        st.text_area("主査への説明やスライドのメモにコピペして使用してください", value=full_report, height=350)
 
 # ---------------------------------------------------------
 # 4. グラフ描画エンジン (Visualization Core)
