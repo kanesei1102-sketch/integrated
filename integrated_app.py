@@ -16,20 +16,20 @@ st.set_page_config(page_title="Ultimate Sci-Stat & Graph Engine", layout="wide")
 # ---------------------------------------------------------
 # 1. サイドバー設定 (Sidebar UI)
 # ---------------------------------------------------------
-    # --- 最上部: Notice ---
 with st.sidebar:
-        st.write("---") # 区切り線
-        st.markdown("""
-        ### 【Notice / ご案内】
-        This tool is a beta version. If you plan to use results from this tool in your publications or conference presentations, **please contact the developer (Seiji Kaneko) in advance.**
+    # --- 最上部: Notice (ご指定の文章に差し替え) ---
+    st.markdown("### 【Notice / ご案内】")
+    st.info("""
+    This tool is a beta version. If you plan to use results from this tool in your publications or conference presentations, **please contact the developer (Seiji Kaneko) in advance.**
 
-        本ツールは現在開発中のベータ版です。論文掲載や学会発表等に使用される際は、**事前に開発者（金子）まで必ず一報ください。**
+    本ツールは現在開発中のベータ版です。論文掲載や学会発表等に使用される際は、**事前に開発者（金子）まで必ず一報ください。**
 
-        👉 **[Contact & Feedback Form / 連絡窓口](https://forms.gle/xgNscMi3KFfWcuZ1A)**
+    👉 **[Contact & Feedback Form / 連絡窓口](https://forms.gle/xgNscMi3KFfWcuZ1A)**
 
-        We will provide guidance on validation support and proper acknowledgments/co-authorship.
-        バリデーションのサポートや、謝辞・共著の記載についてご案内させていただきます。
-        """)
+    We will provide guidance on validation support and proper acknowledgments/co-authorship.
+    バリデーションのサポートや、謝辞・共著の記載についてご案内させていただきます。
+    """)
+    st.divider()
 
     # --- 中部: グラフ設定 ---
     st.header("🛠️ グラフ設定")
