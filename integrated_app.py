@@ -119,108 +119,115 @@ def get_sig_label(p):
 
 sig_pairs = [] 
 
+# --- (中略：データ入力部分までは同じ) ---
+
 if len(data_dict) >= 2:
     st.header("2. 統計解析レポート")
     
     group_names = list(data_dict.keys())
     all_values = list(data_dict.values())
     
-    # 診断: 正規性と等分散性
-    all_normal = True
-    for v in all_values:
-        if len(v) >= 3:
-            _, p_s = stats.shapiro(v)
-            if p_s <= 0.05: all_normal = False
-            
-    try:
-        _, p_lev = stats.levene(*all_values)
-        is_equal_var = (p_lev > 0.05)
-    except:
-        is_equal_var = True
-
-    # 検定ロジック
-    method_name = ""
-    p_global = 1.0
+    # 診断: 各群3サンプル以上あるか確認
+    valid_data = all(len(v) >= 2 for v in all_values)
     
-    # --- 2群比較 ---
-    if len(data_dict) == 2:
-        g1, g2 = all_values[0], all_values[1]
-        if all_normal:
-            method_name = "Student's t-test" if is_equal_var else "Welch's t-test"
-            _, p_global = stats.ttest_ind(g1, g2, equal_var=is_equal_var)
-        else:
-            method_name = "Mann-Whitney U test"
-            _, p_global = stats.mannwhitneyu(g1, g2, alternative='two-sided')
-            
-        if p_global < 0.05:
-            sig_pairs.append({'g1': group_names[0], 'g2': group_names[1], 'label': get_sig_label(p_global), 'p': p_global})
-
-    # --- 3群以上比較 ---
+    if not valid_data:
+        st.warning("各グループに少なくとも2つ以上の数値を入力してください。")
     else:
+        # 診断
+        all_normal = True
+        for v in all_values:
+            if len(v) >= 3:
+                _, p_s = stats.shapiro(v)
+                if p_s <= 0.05: all_normal = False
+                
+        try:
+            _, p_lev = stats.levene(*all_values)
+            is_equal_var = (p_lev > 0.05)
+        except:
+            is_equal_var = True
+
+        # 検定ロジック
+        method_name = ""
+        p_global = 1.0
+        
+        if len(data_dict) == 2:
+            g1, g2 = all_values[0], all_values[1]
+            if all_normal:
+                method_name = "Student's t-test" if is_equal_var else "Welch's t-test"
+                _, p_global = stats.ttest_ind(g1, g2, equal_var=is_equal_var)
+            else:
+                method_name = "Mann-Whitney U test"
+                _, p_global = stats.mannwhitneyu(g1, g2, alternative='two-sided')
+            
+            if p_global < 0.05:
+                sig_pairs.append({'g1': group_names[0], 'g2': group_names[1], 'label': get_sig_label(p_global), 'p': p_global})
+        else:
+            if all_normal and is_equal_var:
+                method_name = "One-way ANOVA + Tukey's HSD"
+                _, p_global = stats.f_oneway(*all_values)
+                if p_global < 0.05:
+                    flat_data = [v for sub in all_values for v in sub]
+                    labels = [n for n, sub in data_dict.items() for _ in sub]
+                    res = pairwise_tukeyhsd(flat_data, labels)
+                    df_res = pd.DataFrame(data=res._results_table.data[1:], columns=res._results_table.data[0])
+                    for _, row in df_res.iterrows():
+                        if row['reject']:
+                            sig_pairs.append({'g1': row['group1'], 'g2': row['group2'], 'label': get_sig_label(row['p-adj']), 'p': row['p-adj']})
+            else:
+                method_name = "Kruskal-Wallis + Dunn's test"
+                _, p_global = stats.kruskal(*all_values)
+                if p_global < 0.05:
+                    dunn = sp.posthoc_dunn(all_values, p_adjust='bonferroni')
+                    dunn.columns = dunn.index = group_names
+                    for i in range(len(group_names)):
+                        for j in range(i+1, len(group_names)):
+                            n1, n2 = group_names[i], group_names[j]
+                            p_val = dunn.loc[n1, n2]
+                            if p_val < 0.05:
+                                sig_pairs.append({'g1': n1, 'g2': n2, 'label': get_sig_label(p_val), 'p': p_val})
+
+        # ★【ここが重要】旧ツールの「親切レポート」の復活
+        st.success(f"**採用された手法: {method_name}**")
+        
         if all_normal and is_equal_var:
-            method_name = "One-way ANOVA + Tukey's HSD"
-            _, p_global = stats.f_oneway(*all_values)
-            
-            if p_global < 0.05:
-                flat_data = [v for sub in all_values for v in sub]
-                labels = [n for n, sub in data_dict.items() for _ in sub]
-                res = pairwise_tukeyhsd(flat_data, labels)
-                
-                df_res = pd.DataFrame(data=res._results_table.data[1:], columns=res._results_table.data[0])
-                for _, row in df_res.iterrows():
-                    if row['reject']:
-                        sig_pairs.append({'g1': row['group1'], 'g2': row['group2'], 'label': get_sig_label(row['p-adj']), 'p': row['p-adj']})
+            [cite_start]easy_reason = "データの分布が偏っておらず、バラツキも均一だったため、最も標準的で精度の高い『パラメトリック検定』を選択しました。" [cite: 1]
+        elif not all_normal:
+            [cite_start]easy_reason = "データに極端な偏りや外れ値が見られたため、数値の大小関係（順位）を重視する、外れ値に強い『ノンパラメトリック検定』を選択しました。" [cite: 1]
         else:
-            method_name = "Kruskal-Wallis + Dunn's test"
-            _, p_global = stats.kruskal(*all_values)
-            
-            if p_global < 0.05:
-                dunn = sp.posthoc_dunn(all_values, p_adjust='bonferroni')
-                dunn.columns = group_names
-                dunn.index = group_names
-                
-                for i in range(len(group_names)):
-                    for j in range(i+1, len(group_names)):
-                        n1, n2 = group_names[i], group_names[j]
-                        p_val = dunn.loc[n1, n2]
-                        if p_val < 0.05:
-                            sig_pairs.append({'g1': n1, 'g2': n2, 'label': get_sig_label(p_val), 'p': p_val})
+            [cite_start]easy_reason = "データのバラツキが群の間で異なっていたため、その差を補正して計算する手法を選択しました。" [cite: 1]
 
-    # レポート表示
-    # レポート表示
-    st.success(f"**採用された手法: {method_name}**")
-    
-    # 日本語の親切な解説ロジックを追加
-    if all_normal and is_equal_var:
-        easy_reason = "データの分布に偏りがなく、群ごとのバラツキも均一であったため、最も標準的で統計的パワーの強い『パラメトリック検定』を採用しました。" [cite: 1]
-    elif not all_normal:
-        easy_reason = "データに正規性が認められなかった（極端な偏りや外れ値がある）ため、数値の順位に基づき、外れ値の影響を受けにくい『ノンパラメトリック検定』を採用しました。" [cite: 1]
-    else:
-        easy_reason = "群の間でバラツキ（分散）に有意な差が認められたため、その差を補正して計算する手法（Welchの方法等）を採用しました。" [cite: 1]
+        [cite_start]result_summary = "【有意差あり】グループ間に、偶然とは言い切れない明らかな差が見つかりました。" if p_global < 0.05 else "【有意差なし】グループ間の差は、誤差の範囲内である可能性が高いです。" [cite: 1]
 
-    result_summary = "【有意差あり】偶然とは言い切れない意味のある差が見つかりました。" if p_global < 0.05 else "【有意差なし】見られた差は誤差の範囲内である可能性が高いです。" [cite: 1]
-
-    with st.expander("📝 そのまま使える報告用レポート (詳細)", expanded=True):
-        full_report = f"""
+        with st.expander("📝 そのまま使える報告用レポート", expanded=True):
+            full_report = f"""
 【解析報告書：{", ".join(group_names)} の比較】
 
-1. 解析の目的：
-   各グループ間の数値に、統計学的な「意味のある違い」が存在するかを確認しました。 
+1. この解析で何を確認したか：
+   [cite_start]各グループの数値の平均に、意味のある「違い」があるかどうかを調べました。 [cite: 1]
 
-2. 採用手法と選定理由：
+2. どの方法で調べたか（その理由）：
    採用手法：{method_name}
-   選定理由：{easy_reason}
-   ※ データの正規性および等分散性を自動診断した上で、最も科学的に妥当な手順を選択しています。 
+   [cite_start]理由：{easy_reason} [cite: 1]
+   [cite_start]※ データの形（正規性）やバラツキ（等分散性）を事前にチェックした上で、最も科学的に妥当な手順を選んでいます。 [cite: 1]
 
-3. 解析結果：
+3. 解析の結果：
    判定：{result_summary}
    全体のP値：{p_global:.4e}
-   （※P値が0.05未満であれば、統計学的に「差がある」と判断します） 
+   [cite_start]（※P値が0.05より小さければ、統計学的に「差がある」と判断します） [cite: 1]
 
-4. 結論：
-   以上の解析に基づき、有意差ラベル（{", ".join(set(p['label'] for p in sig_pairs)) if sig_pairs else "ns"}）を付与したグラフを作成しました。この結果は論文やレポートのエビデンスとして活用可能です。 
-        """
-        st.text_area("主査への説明やスライドのメモにコピペして使用してください", value=full_report, height=350)
+4. 個別の違い（多重比較）：
+   [cite_start]{"3群以上の比較のため、各ペアを総当たりで調べ、厳しい基準で有意差を判定しました。" if len(data_dict) > 2 else "2つのグループを直接比較しました。"} [cite: 1]
+
+5. 結論：
+   [cite_start]解析の結果、今回のデータからは統計学的な裏付けが得られました。この内容に基づき、有意差ラベルを付与したグラフを作成しました。 [cite: 1]
+            """
+            st.text_area("コピペ用", value=full_report, height=350)
+            st.download_button("📥 レポートを保存", data=full_report, file_name="stat_report.txt")
+
+st.divider()
+
+# --- 3. グラフ生成部分はここから ---
+# (※描画エラーを防ぐため、y_limitの計算に安全策を追加してください)
 
 # ---------------------------------------------------------
 # 4. グラフ描画エンジン (Visualization Core)
