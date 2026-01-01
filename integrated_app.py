@@ -16,9 +16,8 @@ st.set_page_config(page_title="Ultimate Sci-Stat & Graph Engine", layout="wide")
 # ---------------------------------------------------------
 # 1. サイドバー設定 (Sidebar UI)
 # ---------------------------------------------------------
-with st.sidebar:
     # --- 最上部: Notice ---
-    # 既存の入力フォームなどのコード...
+with st.sidebar:
         st.write("---") # 区切り線
         st.markdown("""
         ### 【Notice / ご案内】
