@@ -9,18 +9,55 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import scikit_posthocs as sp
 
 # ---------------------------------------------------------
-# 0. ページ設定
+# 0. ページ設定 (Page Config)
 # ---------------------------------------------------------
 st.set_page_config(page_title="Ultimate Sci-Stat & Graph Engine", layout="wide")
-st.title("🔬 Ultimate Sci-Stat & Graph Engine")
-st.markdown("""
-**統計解析から論文グレードのグラフ作成までを自動化する統合ツール (Pro Ver.)**
-データの性質を自動診断し、最適な検定を選択。有意差バー付きのグラフを一瞬で作成します。
-""")
 
 # ---------------------------------------------------------
-# 1. データ入力セクション (CSV & Manual)
+# 1. サイドバー設定 (Sidebar UI)
 # ---------------------------------------------------------
+with st.sidebar:
+    # --- 最上部: Notice ---
+    st.markdown("### 📢 Notice / ご案内")
+    st.info("""
+    **This tool is a beta version.**
+    論文や学会発表に使用される際は、以下のフォームより必ず事前にご連絡ください。
+    
+    👉 **[Contact Form / 連絡窓口](https://forms.gle/xgNscMi3KFfWcuZ1A)**
+    """)
+    st.divider()
+
+    # --- 中部: グラフ設定 ---
+    st.header("🛠️ グラフ設定")
+    
+    with st.expander("📈 グラフの種類", expanded=True):
+        graph_type = st.selectbox("形式", ["棒グラフ (Bar)", "箱ひげ図 (Box)", "バイオリン図 (Violin)"])
+        if "棒" in graph_type:
+            error_type = st.radio("エラーバー", ["SD (標準偏差)", "SEM (標準誤差)"])
+        else:
+            error_type = "None"
+        
+    with st.expander("🎨 デザイン微調整", expanded=True):
+        fig_title = st.text_input("図のタイトル", value="Experiment Result")
+        y_axis_label = st.text_input("Y軸ラベル", value="Relative Value")
+        manual_y_max = st.number_input("Y軸最大値 (0で自動)", value=0.0, step=1.0)
+        
+        st.divider()
+        st.caption("プロット調整")
+        bar_width = st.slider("棒/箱の太さ", 0.1, 1.0, 0.6)
+        dot_size = st.slider("ドットサイズ", 0, 100, 20)
+        dot_alpha = st.slider("ドットの透明度", 0.1, 1.0, 0.7)
+        jitter_strength = st.slider("ばらつき (Jitter)", 0.0, 0.2, 0.04, 0.01)
+        fig_height = st.slider("画像の高さ", 3.0, 10.0, 5.0)
+
+# ---------------------------------------------------------
+# 2. メインエリア：データ入力 (Main Input)
+# ---------------------------------------------------------
+st.title("🔬 Ultimate Sci-Stat & Graph Engine")
+st.markdown("""
+**統計解析から論文グレードのグラフ作成までを自動化する統合ツール (Pro Ver.)** データの性質を自動診断し、最適な検定を選択。有意差バー付きのグラフを一瞬で作成します。
+""")
+
 st.subheader("1. データ入力")
 tab_manual, tab_csv = st.tabs(["✍️ 手動入力", "📂 CSVアップロード"])
 
@@ -51,12 +88,9 @@ with tab_csv:
     if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file)
-            # 柔軟な列名対応
             if len(df.columns) >= 2:
-                g_col = df.columns[0] # 1列目をグループ名と仮定
-                v_col = df.columns[1] # 2列目を数値と仮定
-                
-                # 辞書に変換
+                g_col = df.columns[0]
+                v_col = df.columns[1]
                 for g_name in df[g_col].unique():
                     g_vals = df[df[g_col] == g_name][v_col].dropna().tolist()
                     if len(g_vals) > 0:
@@ -68,48 +102,19 @@ with tab_csv:
             st.error(f"読み込みエラー: {e}")
 
 # ---------------------------------------------------------
-# 2. サイドバー設定 (グラフとデザイン)
+# 3. サイドバー追記：グループカラー設定 (Dynamic Color)
 # ---------------------------------------------------------
-with st.sidebar:
-    st.header("🛠️ グラフ設定")
-    
-    with st.expander("📈 グラフの種類", expanded=True):
-        graph_type = st.selectbox("形式", ["棒グラフ (Bar)", "箱ひげ図 (Box)", "バイオリン図 (Violin)"])
-        if "棒" in graph_type:
-            error_type = st.radio("エラーバー", ["SD (標準偏差)", "SEM (標準誤差)"])
-        else:
-            error_type = "None"
-        
-    with st.expander("🎨 デザイン微調整", expanded=True):
-        fig_title = st.text_input("図のタイトル", value="Experiment Result")
-        y_axis_label = st.text_input("Y軸ラベル", value="Relative Value")
-        manual_y_max = st.number_input("Y軸最大値 (0で自動)", value=0.0, step=1.0)
-        
-        st.divider()
-        st.caption("プロット調整")
-        bar_width = st.slider("棒/箱の太さ", 0.1, 1.0, 0.6)
-        dot_size = st.slider("ドットサイズ", 0, 100, 20)
-        dot_alpha = st.slider("ドットの透明度", 0.1, 1.0, 0.7)
-        jitter_strength = st.slider("ばらつき (Jitter)", 0.0, 0.2, 0.04, 0.01)
-        fig_height = st.slider("画像の高さ", 3.0, 10.0, 5.0)
-
-    # グループごとの色指定 (データがある場合のみ表示)
-    group_colors = {}
-    if data_dict:
+group_colors = {}
+if data_dict:
+    with st.sidebar:
         with st.expander("🖍️ グループカラー設定", expanded=True):
             default_colors = ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7", "#9C755F", "#BAB0AC"]
             for i, g_name in enumerate(data_dict.keys()):
                 col_def = default_colors[i % len(default_colors)]
                 group_colors[g_name] = st.color_picker(f"{g_name} の色", col_def)
-    
-    st.divider()
-    st.markdown("### 📢 Notice")
-    st.caption("本ツールはベータ版です。論文等に使用する際は開発者までご連絡ください。")
-
-st.divider()
 
 # ---------------------------------------------------------
-# 3. 統計解析エンジン (Logic Core)
+# 4. 統計解析エンジン (Logic Core)
 # ---------------------------------------------------------
 def get_sig_label(p):
     if p < 0.001: return "***"
@@ -119,27 +124,26 @@ def get_sig_label(p):
 
 sig_pairs = [] 
 
-# --- (中略：データ入力部分までは同じ) ---
-
 if len(data_dict) >= 2:
     st.header("2. 統計解析レポート")
     
     group_names = list(data_dict.keys())
     all_values = list(data_dict.values())
     
-    # 診断: 各群3サンプル以上あるか確認
-    valid_data = all(len(v) >= 2 for v in all_values)
+    # 診断: データ数チェック
+    valid_data_count = all(len(v) >= 2 for v in all_values)
     
-    if not valid_data:
+    if not valid_data_count:
         st.warning("各グループに少なくとも2つ以上の数値を入力してください。")
     else:
-        # 診断
+        # 正規性診断
         all_normal = True
         for v in all_values:
             if len(v) >= 3:
                 _, p_s = stats.shapiro(v)
                 if p_s <= 0.05: all_normal = False
-                
+        
+        # 等分散性診断
         try:
             _, p_lev = stats.levene(*all_values)
             is_equal_var = (p_lev > 0.05)
@@ -150,6 +154,7 @@ if len(data_dict) >= 2:
         method_name = ""
         p_global = 1.0
         
+        # --- 2群比較 ---
         if len(data_dict) == 2:
             g1, g2 = all_values[0], all_values[1]
             if all_normal:
@@ -158,17 +163,21 @@ if len(data_dict) >= 2:
             else:
                 method_name = "Mann-Whitney U test"
                 _, p_global = stats.mannwhitneyu(g1, g2, alternative='two-sided')
-            
+                
             if p_global < 0.05:
                 sig_pairs.append({'g1': group_names[0], 'g2': group_names[1], 'label': get_sig_label(p_global), 'p': p_global})
+
+        # --- 3群以上比較 ---
         else:
             if all_normal and is_equal_var:
                 method_name = "One-way ANOVA + Tukey's HSD"
                 _, p_global = stats.f_oneway(*all_values)
+                
                 if p_global < 0.05:
                     flat_data = [v for sub in all_values for v in sub]
                     labels = [n for n, sub in data_dict.items() for _ in sub]
                     res = pairwise_tukeyhsd(flat_data, labels)
+                    
                     df_res = pd.DataFrame(data=res._results_table.data[1:], columns=res._results_table.data[0])
                     for _, row in df_res.iterrows():
                         if row['reject']:
@@ -176,9 +185,12 @@ if len(data_dict) >= 2:
             else:
                 method_name = "Kruskal-Wallis + Dunn's test"
                 _, p_global = stats.kruskal(*all_values)
+                
                 if p_global < 0.05:
                     dunn = sp.posthoc_dunn(all_values, p_adjust='bonferroni')
-                    dunn.columns = dunn.index = group_names
+                    dunn.columns = group_names
+                    dunn.index = group_names
+                    
                     for i in range(len(group_names)):
                         for j in range(i+1, len(group_names)):
                             n1, n2 = group_names[i], group_names[j]
@@ -186,51 +198,48 @@ if len(data_dict) >= 2:
                             if p_val < 0.05:
                                 sig_pairs.append({'g1': n1, 'g2': n2, 'label': get_sig_label(p_val), 'p': p_val})
 
-        # ★【ここが重要】旧ツールの「親切レポート」の復活
+        # レポートの解説文生成 (日本語)
+        if all_normal and is_equal_var:
+            easy_reason = "データの分布が偏っておらず、バラツキも均一だったため、最も標準的で精度の高い『パラメトリック検定』を選択しました。"
+        elif not all_normal:
+            easy_reason = "データに極端な偏りや外れ値が見られたため、数値の大小関係（順位）を重視する、外れ値に強い『ノンパラメトリック検定』を選択しました。"
+        else:
+            easy_reason = "データのバラツキが群の間で異なっていたため、その差を補正して計算する手法を選択しました。"
+
+        result_summary = "【有意差あり】グループ間に、偶然とは言い切れない明らかな差が見つかりました。" if p_global < 0.05 else "【有意差なし】グループ間の差は、誤差の範囲内である可能性が高いです。"
+
+        # レポート表示
         st.success(f"**採用された手法: {method_name}**")
         
-        if all_normal and is_equal_var:
-            [cite_start]easy_reason = "データの分布が偏っておらず、バラツキも均一だったため、最も標準的で精度の高い『パラメトリック検定』を選択しました。" [cite: 1]
-        elif not all_normal:
-            [cite_start]easy_reason = "データに極端な偏りや外れ値が見られたため、数値の大小関係（順位）を重視する、外れ値に強い『ノンパラメトリック検定』を選択しました。" [cite: 1]
-        else:
-            [cite_start]easy_reason = "データのバラツキが群の間で異なっていたため、その差を補正して計算する手法を選択しました。" [cite: 1]
-
-        [cite_start]result_summary = "【有意差あり】グループ間に、偶然とは言い切れない明らかな差が見つかりました。" if p_global < 0.05 else "【有意差なし】グループ間の差は、誤差の範囲内である可能性が高いです。" [cite: 1]
-
-        with st.expander("📝 そのまま使える報告用レポート", expanded=True):
+        with st.expander("📝 そのまま使える報告用レポート (詳細)", expanded=True):
             full_report = f"""
 【解析報告書：{", ".join(group_names)} の比較】
 
 1. この解析で何を確認したか：
-   [cite_start]各グループの数値の平均に、意味のある「違い」があるかどうかを調べました。 [cite: 1]
+   各グループの数値の平均に、意味のある「違い」があるかどうかを調べました。
 
 2. どの方法で調べたか（その理由）：
    採用手法：{method_name}
-   [cite_start]理由：{easy_reason} [cite: 1]
-   [cite_start]※ データの形（正規性）やバラツキ（等分散性）を事前にチェックした上で、最も科学的に妥当な手順を選んでいます。 [cite: 1]
+   理由：{easy_reason}
+   ※ データの形（正規性）やバラツキ（等分散性）を事前にチェックした上で、最も科学的に妥当な手順を選んでいます。
 
 3. 解析の結果：
    判定：{result_summary}
    全体のP値：{p_global:.4e}
-   [cite_start]（※P値が0.05より小さければ、統計学的に「差がある」と判断します） [cite: 1]
+   （※P値が0.05より小さければ、統計学的に「差がある」と判断します）
 
 4. 個別の違い（多重比較）：
-   [cite_start]{"3群以上の比較のため、各ペアを総当たりで調べ、厳しい基準で有意差を判定しました。" if len(data_dict) > 2 else "2つのグループを直接比較しました。"} [cite: 1]
+   {"3群以上の比較のため、各ペアを総当たりで調べ、厳しい基準で有意差を判定しました。" if len(data_dict) > 2 else "2つのグループを直接比較しました。"}
 
 5. 結論：
-   [cite_start]解析の結果、今回のデータからは統計学的な裏付けが得られました。この内容に基づき、有意差ラベルを付与したグラフを作成しました。 [cite: 1]
+   解析の結果、今回のデータからは統計学的な裏付けが得られました。この内容に基づき、有意差ラベルを付与したグラフを作成しました。
             """
-            st.text_area("コピペ用", value=full_report, height=350)
-            st.download_button("📥 レポートを保存", data=full_report, file_name="stat_report.txt")
+            st.text_area("コピペ用レポート", value=full_report, height=350)
 
-st.divider()
-
-# --- 3. グラフ生成部分はここから ---
-# (※描画エラーを防ぐため、y_limitの計算に安全策を追加してください)
+    st.divider()
 
 # ---------------------------------------------------------
-# 4. グラフ描画エンジン (Visualization Core)
+# 5. グラフ描画エンジン (Visualization Core)
 # ---------------------------------------------------------
 if len(data_dict) >= 1:
     st.header("3. グラフ生成 (Auto-Labeling)")
@@ -242,11 +251,9 @@ if len(data_dict) >= 1:
         group_names = list(data_dict.keys())
         x_positions = np.arange(len(group_names))
         
-        # 最大値の計算 (Y軸調整用)
-        max_val = -np.inf
-        for v in data_dict.values():
-            if len(v) > 0: max_val = max(max_val, max(v))
-        if max_val == -np.inf: max_val = 1
+        # Y軸の最大値計算 (安全策)
+        all_vals_flat = [v for sub in data_dict.values() for v in sub if len(sub) > 0]
+        max_val = np.max(all_vals_flat) if all_vals_flat else 1.0
         
         # --- A. プロット描画 ---
         for i, (name, vals) in enumerate(data_dict.items()):
@@ -258,7 +265,6 @@ if len(data_dict) >= 1:
             sem_v = std_v / np.sqrt(len(vals)) if len(vals) > 0 else 0
             err = sem_v if error_type == "SEM" else std_v
             
-            # 色の取得 (サイドバー設定)
             my_color = group_colors.get(name, "#333333")
 
             if "棒" in graph_type:
@@ -273,14 +279,13 @@ if len(data_dict) >= 1:
                     pc.set_facecolor(my_color)
                     pc.set_alpha(0.8)
             
-            # ドットプロット (Jitter & Alpha)
             if dot_size > 0:
                 noise = np.random.normal(0, jitter_strength, len(vals))
                 ax.scatter(x_positions[i] + noise, vals, s=dot_size, color='white', edgecolor='gray', zorder=3, alpha=dot_alpha)
 
         # --- B. 有意差バーの自動描画 ---
         y_step = max_val * 0.15
-        current_y = max_val * 1.1
+        current_y = max_val * 1.15 # 初期位置を少し高めに
         
         for pair in sig_pairs:
             try:
@@ -306,7 +311,7 @@ if len(data_dict) >= 1:
         if manual_y_max > 0:
             ax.set_ylim(0, manual_y_max)
         else:
-            ax.set_ylim(0, current_y * 1.05)
+            ax.set_ylim(0, current_y * 1.1)
         
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -323,3 +328,18 @@ if len(data_dict) >= 1:
 
 else:
     st.info("データを入力してください (手動 または CSV)")
+
+# ---------------------------------------------------------
+# 6. サイドバー最下部：免責事項 (Disclaimer)
+# ---------------------------------------------------------
+with st.sidebar:
+    st.divider()
+    st.caption("【免責事項 / Disclaimer】")
+    st.caption("""
+    本ツールは統計学的判断および解析の補助を目的としています。
+    計算には信頼性の高いライブラリを使用していますが、最終的な解釈および結論については、
+    利用者が専門的知見に基づいて判断してください。
+
+    This tool is for assistive purposes. Final interpretations and conclusions 
+    should be made by the user based on professional expertise.
+    """)
