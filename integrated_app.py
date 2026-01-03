@@ -19,17 +19,16 @@ st.set_page_config(page_title="Ultimate Sci-Stat & Graph Engine", layout="wide")
 with st.sidebar:
     st.markdown("### 【ご案内】")
     st.info("""
-    This tool acts as a GUI wrapper for standard Python statistical libraries (**SciPy, Statsmodels, scikit-posthocs**).
+    **「なぜその検定なのか？」がわかる統計ツール**
     
-    本ツールは、信頼性の高い標準統計ライブラリ（SciPy等）を実行するためのインターフェースです。
-    論文記載時は「独自ソフト」ではなく「PythonのSciPyライブラリ等を使用した」と記述してください。
+    データの分布（正規性）やバラツキ（等分散性）を自動診断し、
+    教科書的なロジックに従って最適な検定法を選択・解説します。
 
-    👉 **[Contact & Feedback](https://forms.gle/xgNscMi3KFfWcuZ1A)**
+    👉 **[フィードバックはこちら](https://forms.gle/xgNscMi3KFfWcuZ1A)**
     """)
     st.divider()
 
     st.header("🛠️ グラフ設定")
-    
     with st.expander("📈 グラフの種類", expanded=True):
         graph_type = st.selectbox("形式", ["棒グラフ (Bar)", "箱ひげ図 (Box)", "バイオリン図 (Violin)"])
         if "棒" in graph_type:
@@ -37,40 +36,31 @@ with st.sidebar:
         else:
             error_type = "None"
         
-    with st.expander("🎨 デザイン微調整", expanded=False):
-        fig_title = st.text_input("図のタイトル", value="Experiment Result")
-        y_axis_label = st.text_input("Y軸ラベル", value="Relative Value")
+    with st.expander("🎨 デザイン調整", expanded=False):
+        fig_title = st.text_input("図のタイトル", value="実験結果")
+        y_axis_label = st.text_input("Y軸ラベル", value="相対値")
         manual_y_max = st.number_input("Y軸最大値 (0で自動)", value=0.0, step=1.0)
-        
-        st.divider()
-        st.caption("間隔と太さの調整")
-        group_spacing = st.slider("↔️ グループ間の距離 (間隔)", 0.8, 3.0, 1.2, 0.1)
-        bar_width = st.slider("⬛ 棒/箱の太さ (幅)", 0.1, 1.5, 0.6, 0.1)
-        
-        st.caption("ドット・その他")
+        group_spacing = st.slider("↔️ 間隔", 0.8, 3.0, 1.2, 0.1)
+        bar_width = st.slider("⬛ 太さ", 0.1, 1.5, 0.6, 0.1)
         dot_size = st.slider("ドットサイズ", 0, 100, 20)
-        dot_alpha = st.slider("ドットの透明度", 0.1, 1.0, 0.7)
-        jitter_strength = st.slider("ばらつき (Jitter)", 0.0, 0.2, 0.04, 0.01)
+        dot_alpha = st.slider("ドット透明度", 0.1, 1.0, 0.7)
+        jitter_strength = st.slider("Jitter (散らし)", 0.0, 0.2, 0.04)
         fig_height = st.slider("画像の高さ", 3.0, 10.0, 5.0)
 
 # ---------------------------------------------------------
 # 2. メインエリア：データ入力
 # ---------------------------------------------------------
 st.title("🔬 Ultimate Sci-Stat & Graph Engine")
-st.markdown("""
-**標準ライブラリ (SciPy, Statsmodels) を用いた統計解析とグラフ作成ツール**
-データの正規性・等分散性を自動診断し、適切な検定メソッドを呼び出します。
-""")
+st.caption("Pro Version: 初学者でも「根拠のある統計解析」ができる教育的解析ツール")
 
 st.subheader("1. データ入力")
 tab_manual, tab_csv = st.tabs(["✍️ 手動入力", "📂 CSVアップロード"])
 
 data_dict = {}
 
-# --- A. 手動入力モード ---
+# --- A. 手動入力 ---
 with tab_manual:
     if 'g_count' not in st.session_state: st.session_state.g_count = 3
-    
     col_ctrl, _ = st.columns([1, 5])
     with col_ctrl:
         c1, c2 = st.columns(2)
@@ -81,29 +71,25 @@ with tab_manual:
     for i in range(st.session_state.g_count):
         with cols[i % 4]:
             def_name = f"Group {i+1}"
-            name = st.text_input(f"名前 {i+1}", value=def_name, key=f"n{i}")
-            raw = st.text_area(f"データ {i+1}", height=120, key=f"d{i}", placeholder="10.5\n12.3")
+            name = st.text_input(f"名 {i+1}", value=def_name, key=f"n{i}")
+            raw = st.text_area(f"値 {i+1}", height=120, key=f"d{i}", placeholder="10.5\n12.3")
             vals = [float(x.strip()) for x in raw.replace(',', '\n').split('\n') if x.strip()]
             if len(vals) > 0: data_dict[name] = vals
 
-# --- B. CSVアップロードモード ---
+# --- B. CSVアップロード ---
 with tab_csv:
-    uploaded_file = st.file_uploader("CSVファイルをアップロード (列名: Group, Value)", type="csv")
+    uploaded_file = st.file_uploader("CSV (A列:Group, B列:Value)", type="csv")
     if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file)
             if len(df.columns) >= 2:
-                g_col = df.columns[0]
-                v_col = df.columns[1]
+                g_col, v_col = df.columns[0], df.columns[1]
                 for g_name in df[g_col].unique():
                     g_vals = df[df[g_col] == g_name][v_col].dropna().tolist()
-                    if len(g_vals) > 0:
-                        data_dict[g_name] = g_vals
-                st.success(f"CSV読み込み成功: {len(data_dict)} グループを検出")
-            else:
-                st.error("CSVは2列以上である必要があります (例: A列=グループ名, B列=数値)")
-        except Exception as e:
-            st.error(f"読み込みエラー: {e}")
+                    if len(g_vals) > 0: data_dict[g_name] = g_vals
+                st.success(f"読込成功: {len(data_dict)} グループ")
+            else: st.error("CSVは2列以上必要です")
+        except Exception as e: st.error(f"エラー: {e}")
 
 # ---------------------------------------------------------
 # 3. グループカラー設定
@@ -118,7 +104,7 @@ if data_dict:
                 group_colors[g_name] = st.color_picker(f"{g_name} の色", col_def)
 
 # ---------------------------------------------------------
-# 4. 統計解析エンジン (SciPy Wrapper / Scientific Defense)
+# 4. 解析ロジック & 教育的レポート生成
 # ---------------------------------------------------------
 def get_sig_label(p):
     if p < 0.001: return "***"
@@ -129,29 +115,25 @@ def get_sig_label(p):
 sig_pairs = [] 
 
 if len(data_dict) >= 2:
-    st.header("2. 統計解析レポート")
+    st.header("2. 自動診断 & 統計解析レポート")
     
     group_names = list(data_dict.keys())
     all_values = list(data_dict.values())
     
-    valid_data_count = all(len(v) >= 2 for v in all_values)
-    
-    if not valid_data_count:
-        st.warning("各グループに少なくとも2つ以上の数値を入力してください。")
+    if not all(len(v) >= 2 for v in all_values):
+        st.warning("⚠️ 各グループに少なくとも2つ以上のデータが必要です。")
     else:
-        # --- 自動診断ロジック (Automatic Diagnosis) ---
+        # --- Step 1: データの健康診断 (正規性・等分散性) ---
         all_normal = True
-        small_n = False  # サンプル数不足フラグ
+        small_n = False
         
-        # 正規性診断 (Shapiro-Wilk)
         for v in all_values:
             if len(v) < 3:
-                small_n = True  # n < 3 の場合は検定不能
+                small_n = True
             else:
                 _, p_s = stats.shapiro(v)
                 if p_s <= 0.05: all_normal = False
         
-        # 等分散性診断 (Levene)
         try:
             _, p_lev = stats.levene(*all_values)
             is_equal_var = (p_lev > 0.05)
@@ -159,25 +141,21 @@ if len(data_dict) >= 2:
             is_equal_var = True
 
         method_name = ""
-        lib_name = ""
         p_global = 1.0
         
-        # --- 検定実行 ---
+        # --- Step 2: 検定の実行 & ロジック決定 ---
         # 2群比較
         if len(data_dict) == 2:
             g1, g2 = all_values[0], all_values[1]
             if all_normal:
                 if is_equal_var:
-                    method_name = "Studentのt検定"
-                    lib_name = "scipy.stats.ttest_ind"
+                    method_name = "Studentのt検定 (Student's t-test)"
                     _, p_global = stats.ttest_ind(g1, g2, equal_var=True)
                 else:
-                    method_name = "Welchのt検定"
-                    lib_name = "scipy.stats.ttest_ind (equal_var=False)"
+                    method_name = "Welchのt検定 (Welch's t-test)"
                     _, p_global = stats.ttest_ind(g1, g2, equal_var=False)
             else:
-                method_name = "Mann-WhitneyのU検定"
-                lib_name = "scipy.stats.mannwhitneyu"
+                method_name = "マン・ホイットニーのU検定 (Mann-Whitney U test)"
                 _, p_global = stats.mannwhitneyu(g1, g2, alternative='two-sided')
                 
             if p_global < 0.05:
@@ -187,28 +165,23 @@ if len(data_dict) >= 2:
         else:
             if all_normal and is_equal_var:
                 method_name = "一元配置分散分析 (ANOVA) + Tukey法"
-                lib_name = "scipy.stats.f_oneway & statsmodels"
                 _, p_global = stats.f_oneway(*all_values)
                 
                 if p_global < 0.05:
                     flat_data = [v for sub in all_values for v in sub]
                     labels = [n for n, sub in data_dict.items() for _ in sub]
                     res = pairwise_tukeyhsd(flat_data, labels)
-                    
                     df_res = pd.DataFrame(data=res._results_table.data[1:], columns=res._results_table.data[0])
                     for _, row in df_res.iterrows():
                         if row['reject']:
                             sig_pairs.append({'g1': row['group1'], 'g2': row['group2'], 'label': get_sig_label(row['p-adj']), 'p': row['p-adj']})
             else:
-                method_name = "Kruskal-Wallis検定 + Dunn検定"
-                lib_name = "scipy.stats.kruskal & scikit_posthocs"
+                method_name = "クラスカル・ウォリス検定 + Dunn検定"
                 _, p_global = stats.kruskal(*all_values)
                 
                 if p_global < 0.05:
                     dunn = sp.posthoc_dunn(all_values, p_adjust='bonferroni')
-                    dunn.columns = group_names
-                    dunn.index = group_names
-                    
+                    dunn.columns = group_names; dunn.index = group_names
                     for i in range(len(group_names)):
                         for j in range(i+1, len(group_names)):
                             n1, n2 = group_names[i], group_names[j]
@@ -216,7 +189,7 @@ if len(data_dict) >= 2:
                             if p_val < 0.05:
                                 sig_pairs.append({'g1': n1, 'g2': n2, 'label': get_sig_label(p_val), 'p': p_val})
 
-        # --- レポート生成ロジック (アカデミック表現版) ---
+        # --- Step 3: レポート生成ロジック (Corrected Conclusion) ---
         
         # 理由の生成
         easy_reason = ""
@@ -227,16 +200,20 @@ if len(data_dict) >= 2:
         else:
             easy_reason = "正規性は棄却されませんでしたが、分散の均一性が棄却されたため、不等分散に対応した手法を選択しました。"
 
-        # Small N の場合の「逃げ道」追加
         if small_n:
             easy_reason += "\n   ※ 一部の群でサンプル数が少ないため、分布の厳密な評価は行っていません（正規性を仮定して計算しています）。"
 
-        result_summary = "【有意差あり】" if p_global < 0.05 else "【有意差なし】"
+        # 結論のテキスト生成 (ユーザー指定の修正版)
+        if p_global < 0.05:
+            result_summary = "【有意差あり】"
+            conclusion_text = "本データセットにおいて群間に統計学的な有意差が認められ、少なくとも一部の群間で平均値（または代表値）に差が存在することが示唆されました。"
+        else:
+            result_summary = "【有意差なし】"
+            conclusion_text = "本データセットにおいて群間に統計学的な有意差は認められず、各群の平均値に明確な差は見出せませんでした。"
 
-        # 診断プロセスの文章化 (Scientific Defense Logic)
+        # 診断プロセスの文章化
         norm_res_text = "大きな歪みは検出されず (Not Rejected)" if all_normal else "非正規性を示唆 (Rejected)"
         if small_n: norm_res_text += " ※n<3のため参考値"
-        
         var_res_text = "等分散性は棄却されず (Not Rejected)" if is_equal_var else "等分散性は棄却された (Rejected)"
 
         analysis_path = f"""
@@ -267,7 +244,7 @@ if len(data_dict) >= 2:
    {"各ペア間の検定を実施し、有意差の有無をグラフに反映しました。" if len(data_dict) > 2 else "2群間の直接比較を実施しました。"}
 
 4. 結論：
-   本データセットにおいて、統計学的な有意差が{"認められました" if p_global < 0.05 else "認められませんでした"}。
+   {conclusion_text}
             """
             st.text_area("レポート全文", value=full_report, height=400)
             
