@@ -47,8 +47,13 @@ with st.sidebar:
         manual_y_max = st.number_input("Y軸最大値 (0で自動)", value=0.0, step=1.0)
         
         st.divider()
-        st.caption("プロット調整")
-        bar_width = st.slider("棒/箱の太さ", 0.1, 1.0, 0.6)
+        st.caption("間隔と太さの調整")
+        
+        # ★★★ ここで変数を定義しています ★★★
+        group_spacing = st.slider("↔️ グループ間の距離 (間隔)", 0.8, 3.0, 1.2, 0.1, help="X軸の目盛り間隔を広げます。")
+        bar_width = st.slider("⬛ 棒/箱の太さ (幅)", 0.1, 1.5, 0.6, 0.1, help="オブジェクト自体の太さを変更します。")
+        
+        st.caption("ドット・その他")
         dot_size = st.slider("ドットサイズ", 0, 100, 20)
         dot_alpha = st.slider("ドットの透明度", 0.1, 1.0, 0.7)
         jitter_strength = st.slider("ばらつき (Jitter)", 0.0, 0.2, 0.04, 0.01)
