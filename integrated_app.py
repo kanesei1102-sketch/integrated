@@ -14,7 +14,7 @@ import scikit_posthocs as sp
 st.set_page_config(page_title="Ultimate Sci-Stat & Graph Engine", layout="wide")
 
 # ---------------------------------------------------------
-# 1. サイドバー設定 (文言を「共著・連絡必須」版に復元)
+# 1. サイドバー設定 (文言は「共著・連絡必須」版)
 # ---------------------------------------------------------
 with st.sidebar:
     st.markdown("### 【Notice / ご案内】")
@@ -32,10 +32,18 @@ with st.sidebar:
 
     st.header("🛠️ グラフ設定")
     
-    # === 機能追加部分: 自動/手動の選択 ===
-    with st.expander("📈 グラフの種類", expanded=True):
+    # === 機能追加: 自動/手動 + 外れ値対策 ===
+    with st.expander("📈 グラフの種類・スケール", expanded=True):
         graph_mode = st.radio("選択モード", ["自動 (Auto - 推奨)", "手動 (Manual)"])
         
+        # 外れ値対策用のスケール設定
+        scale_option = st.radio("Y軸のスケール (外れ値対策)", ["線形 (Linear)", "対数 (Log)"], help="データに極端な外れ値がある場合は「対数」を推奨します。")
+        
+        # ズーム機能
+        auto_zoom = False
+        if scale_option == "線形 (Linear)":
+            auto_zoom = st.checkbox("外れ値を無視してズーム (Auto-Crop)", value=False, help="チェックを入れると、極端な外れ値を画面外に追い出し、メインのデータが見えるようにY軸を拡大します。")
+
         if graph_mode == "手動 (Manual)":
             manual_graph_type = st.selectbox("形式", ["棒グラフ (Bar)", "箱ひげ図 (Box)", "バイオリン図 (Violin)"])
             if "棒" in manual_graph_type:
@@ -43,8 +51,8 @@ with st.sidebar:
             else:
                 error_type = "None"
         else:
-            st.caption("※ データの正規性に基づき、最適な形式（棒 or 箱ひげ）を自動選択します。")
-            error_type = "SD (標準偏差)" # Default
+            st.caption("※ データの分布に基づき、最適な形式を自動選択します。")
+            error_type = "SD (標準偏差)"
 
     with st.expander("🎨 デザイン微調整", expanded=False):
         fig_title = st.text_input("図のタイトル", value="Experiment Result")
@@ -63,11 +71,11 @@ with st.sidebar:
         fig_height = st.slider("画像の高さ", 3.0, 10.0, 5.0)
 
 # ---------------------------------------------------------
-# 2. メインエリア：データ入力 (タイトル等は元のまま)
+# 2. メインエリア：データ入力
 # ---------------------------------------------------------
 st.title("🔬 Ultimate Sci-Stat & Graph Engine")
 st.markdown("""
-**統計解析から論文グレードのグラフ作成までを自動化する統合ツール (Pro Ver.)** データの性質を自動診断し、最適な検定を選択。有意差バー付きのグラフを一瞬で作成します。
+**統計解析から論文グレードのグラフ作成までを自動化する統合ツール (Pro Ver.)** データの性質を自動診断し、最適な検定を選択。外れ値を含むデータでも適切な可視化を提供します。
 """)
 
 st.subheader("1. データ入力")
@@ -164,7 +172,7 @@ if len(data_dict) >= 2:
         p_global = 1.0
         
         # --- 検定実行 ---
-        # 2群比較
+        # 2群
         if len(data_dict) == 2:
             g1, g2 = all_values[0], all_values[1]
             if all_normal:
@@ -181,7 +189,7 @@ if len(data_dict) >= 2:
             if p_global < 0.05:
                 sig_pairs.append({'g1': group_names[0], 'g2': group_names[1], 'label': get_sig_label(p_global), 'p': p_global})
 
-        # 3群以上比較
+        # 3群以上
         else:
             if all_normal and is_equal_var:
                 method_name = "一元配置分散分析 (ANOVA) + Tukey法"
@@ -209,7 +217,7 @@ if len(data_dict) >= 2:
                             if p_val < 0.05:
                                 sig_pairs.append({'g1': n1, 'g2': n2, 'label': get_sig_label(p_val), 'p': p_val})
 
-        # --- レポート生成 (日本語詳細版) ---
+        # --- レポート生成 (詳細日本語版) ---
         easy_reason = ""
         if all_normal and is_equal_var:
             easy_reason = "データの分布に大きな歪みは検出されず、等分散性も棄却されなかったため、最も標準的で検出力の高い『パラメトリック検定』を選択しました。"
@@ -271,12 +279,12 @@ P値 0.05 未満を統計学的に有意とみなした。
     st.divider()
 
 # ---------------------------------------------------------
-# 5. グラフ描画エンジン (機能追加: Smart Graph Selection)
+# 5. グラフ描画エンジン (Smart Graph Selection & Log Scale)
 # ---------------------------------------------------------
 if len(data_dict) >= 1:
     st.header("3. グラフ生成 (Auto-Labeling)")
     
-    # ===【機能追加】グラフ種類の自動上書きロジック ===
+    # ===【重要】グラフ種類の自動最適化 ===
     final_graph_type = "棒グラフ (Bar)" # Default
     
     if graph_mode.startswith("手動"):
@@ -284,12 +292,11 @@ if len(data_dict) >= 1:
     else:
         # 自動モード: データ診断に基づいて決定
         if not all_normal:
-            # 非正規分布なら「箱ひげ図」を強制
             final_graph_type = "箱ひげ図 (Box)"
-            st.warning("⚠️ **【最適化】** データに偏り（非正規性）があるため、棒グラフ（平均値）ではなく**「箱ひげ図（中央値）」**を表示しています。これにより外れ値の影響を正しく可視化できます。")
+            st.warning("⚠️ **【最適化】** 非正規分布（または外れ値）が検出されました。平均値の棒グラフではなく**「箱ひげ図（中央値）」**を表示します。")
         else:
             final_graph_type = "棒グラフ (Bar)"
-            st.success("✅ **【最適化】** データは正規分布に従っているため、**「棒グラフ（平均値 + エラーバー）」**を表示します。")
+            st.success("✅ **【最適化】** 正規分布のため、標準的な**「棒グラフ（平均値）」**を表示します。")
 
     try:
         plt.rcParams['font.family'] = 'sans-serif'
@@ -299,8 +306,14 @@ if len(data_dict) >= 1:
         group_names = list(data_dict.keys())
         x_positions = np.arange(len(group_names)) * group_spacing
         
+        # 全データ結合（最大値計算用）
         all_vals_flat = [v for sub in data_dict.values() for v in sub if len(sub) > 0]
         max_val = np.max(all_vals_flat) if all_vals_flat else 1.0
+        
+        # ===【重要】対数軸の設定 ===
+        if "対数" in scale_option:
+            ax.set_yscale('log')
+            # ログの場合、エラーバーの下限が負にならないよう注意が必要だが、今回は簡易実装
         
         for i, (name, vals) in enumerate(data_dict.items()):
             if len(vals) == 0: continue
@@ -320,35 +333,72 @@ if len(data_dict) >= 1:
                            boxprops=dict(facecolor=my_color, alpha=0.8), medianprops=dict(color='black'), showfliers=False)
             elif "バイオリン" in final_graph_type:
                 parts = ax.violinplot(vals, positions=[pos], widths=bar_width, showextrema=False)
-                for pc in parts['bodies']: pc.set_facecolor(my_color); pc.set_alpha(0.8)
+                for pc in parts['bodies']:
+                    pc.set_facecolor(my_color); pc.set_alpha(0.8)
             
             if dot_size > 0:
                 noise = np.random.normal(0, jitter_strength, len(vals))
                 ax.scatter(pos + noise, vals, s=dot_size, color='white', edgecolor='gray', zorder=3, alpha=dot_alpha)
 
-        # Significant bars
-        y_step = max_val * 0.15; current_y = max_val * 1.15
+        # Significant bars logic
+        # ログスケールの場合、高さの計算が狂うため、対数軸では簡易表示にするか、ユーザーに任せる
+        y_step = max_val * 0.15 
+        current_y = max_val * 1.15
+        
+        # ===【重要】外れ値除外ズームの計算 ===
+        # 線形スケール かつ Auto-Crop がONの場合のみ、Y軸を制限する
+        if scale_option == "線形 (Linear)" and auto_zoom:
+            # 第3四分位数 + 1.5IQR を計算し、それより少し上を上限とする
+            q75, q25 = np.percentile(all_vals_flat, [75 ,25])
+            iqr = q75 - q25
+            upper_fence = q75 + 1.5 * iqr
+            # データ全体のマックスがフェンスより遥かに高い場合（外れ値）、フェンスを採用
+            if max_val > upper_fence * 1.5: # 1.5倍以上乖離している場合
+                current_y = upper_fence * 1.2 # フェンスの少し上を基準にする
+                y_step = upper_fence * 0.1
+                st.caption(f"ℹ️ 外れ値を除外してズームしました (Y-max: {current_y:.1f})")
+
         for pair in sig_pairs:
             try:
                 idx1 = group_names.index(pair['g1']); idx2 = group_names.index(pair['g2'])
                 x1, x2 = x_positions[idx1], x_positions[idx2]
-                bar_h = current_y; col_h = max_val * 0.03
+                
+                bar_h = current_y
+                col_h = bar_h * 0.03 # 対数軸だと見た目が変わるが一旦比率で
                 ax.plot([x1, x1, x2, x2], [bar_h-col_h, bar_h, bar_h, bar_h-col_h], lw=1.5, c='black')
                 ax.text((x1+x2)/2, bar_h, pair['label'], ha='center', va='bottom', fontsize=14)
-                current_y += y_step
+                
+                # 次のバーのために高さを上げる（対数の場合は掛け算にするのが理想だが、簡易的に足し算）
+                if "対数" in scale_option:
+                    current_y *= 1.5 # 対数なら掛け算で上げる
+                else:
+                    current_y += y_step
             except: pass
 
-        ax.set_xticks(x_positions); ax.set_xticklabels(group_names, fontsize=12)
-        ax.set_ylabel(y_axis_label, fontsize=12); ax.set_title(fig_title, fontsize=14)
-        margin = 0.8 * group_spacing; ax.set_xlim(min(x_positions) - margin, max(x_positions) + margin)
-        ax.set_ylim(0, manual_y_max) if manual_y_max > 0 else ax.set_ylim(0, current_y * 1.1)
-        ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(group_names, fontsize=12)
+        ax.set_ylabel(y_axis_label, fontsize=12)
+        ax.set_title(fig_title, fontsize=14)
+        
+        margin = 0.8 * group_spacing
+        ax.set_xlim(min(x_positions) - margin, max(x_positions) + margin)
+
+        if manual_y_max > 0:
+            ax.set_ylim(bottom=0 if "線形" in scale_option else None, top=manual_y_max)
+        else:
+            # 自動計算した current_y を適用 (Auto-Cropが効いている場合は低い値になる)
+            ax.set_ylim(bottom=0 if "線形" in scale_option else None, top=current_y * 1.1)
+        
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
         
         st.pyplot(fig)
-        img_buf = io.BytesIO(); fig.savefig(img_buf, format='png', bbox_inches='tight', dpi=300)
+        img_buf = io.BytesIO()
+        fig.savefig(img_buf, format='png', bbox_inches='tight', dpi=300)
         now_str = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         st.download_button("📥 画像を保存 (PNG)", data=img_buf, file_name=f"result_{now_str}.png", mime="image/png")
-    except Exception as e: st.error(f"描画エラー: {e}")
+    except Exception as e:
+        st.error(f"描画エラー: {e}")
 else:
     st.info("データを入力してください (手動 または CSV)")
 
@@ -357,12 +407,8 @@ else:
 # ---------------------------------------------------------
 with st.sidebar:
     st.divider()
-    st.caption("【免責事項 / Disclaimer】")
+    st.caption("【免責事項】")
     st.caption("""
-    本ツールは統計学的判断および解析の補助を目的としています。
-    計算には信頼性の高いライブラリを使用していますが、最終的な解釈および結論については、
-    利用者が専門的知見に基づいて判断してください。
-
-    This tool is for assistive purposes. Final interpretations and conclusions 
-    should be made by the user based on professional expertise.
+    本ツールは、SciPy/Statsmodels等のオープンソースライブラリを利用した計算結果を表示するものです。
+    最終的な解釈および結論については、利用者が専門的知見に基づいて判断してください。
     """)
