@@ -22,12 +22,12 @@ If you plan to use results from this tool in your publications or conference pre
 * **Auto-Diagnosis**: Automatically checks Normality (**Shapiro-Wilk**) and Homogeneity (**Levene**).
 * **Smart Selection**: Automatically selects between parametric and non-parametric tests (ANOVA, Tukey's HSD, etc.) based on data distribution.
 * **Publication-Ready**: Generates high-resolution graphs with **automatic significance labeling** (brackets).
-* **Bilingual Report**: Outputs a formal statistical report in both **English and Japanese** for global teams.
+* **Formal Reports**: Outputs a professional statistical report in English (English version) or Japanese (Japanese version), ready for immediate use in documentation.
 
 * **自動診断**: 正規性（**Shapiro-Wilk**）と等分散性（**Levene**）を自動でチェック。
 * **最適手法の選択**: 診断結果に基づき、**t検定、ANOVA、Tukeyの多重比較**など、統計学的に妥当な手法を自動選択。
 * **論文クオリティ**: **有意差バー（ブラケット）を自動付与**した高解像度グラフを生成。
-* **日英バイリンガル報告書**: そのまま論文やグローバルチームへの共有に使える形式で解析結果を出力。
+* **解析報告書**: 日本語版では日本語、英語版では英語で、そのまま論文や社内レポートに使える形式で解析結果を出力。
 
 ---
 
