@@ -202,7 +202,9 @@ if len(data_dict) >= 2:
                             if p_val < 0.05:
                                 sig_pairs.append({'g1': n1, 'g2': n2, 'label': get_sig_label(p_val), 'p': p_val})
 
-        # レポートの解説文生成 (日本語)
+        
+
+       # レポートの解説文生成 (日本語)
         if all_normal and is_equal_var:
             easy_reason = "データの分布が偏っておらず、バラツキも均一だったため、最も標準的で精度の高い『パラメトリック検定』を選択しました。"
         elif not all_normal:
@@ -212,20 +214,24 @@ if len(data_dict) >= 2:
 
         result_summary = "【有意差あり】グループ間に、偶然とは言い切れない明らかな差が見つかりました。" if p_global < 0.05 else "【有意差なし】グループ間の差は、誤差の範囲内である可能性が高いです。"
 
+        # --- 追加: 判定プロセスの文字列生成 ---
+        # f-stringの中で日本語を使うため、トリプルクォートで確実に囲みます
+        analysis_path = f"""
+【判定プロセス（自動診断）】
+1. 正規性確認：{"合格（正規分布）" if all_normal else "不合格（非正規分布あり）"}
+2. 等分散性確認：{"合格（均一）" if is_equal_var else "不合格（不均一）"}
+⇒ 上記診断に基づき、統計的に最も妥当な手法として「{method_name}」を自動選択しました。
+"""
+
         # レポート表示
         st.success(f"**採用された手法: {method_name}**")
         
         with st.expander("📝 そのまま使える報告用レポート (詳細)", expanded=True):
+            # analysis_path をレポート本文に埋め込みます
             full_report = f"""
 【解析報告書：{", ".join(group_names)} の比較】
 
-# レポート文字列の追加案
-analysis_path = f"""
-【判定プロセス】
-1. 正規性確認：{"合格（正規分布）" if all_normal else "不合格（非正規分布あり）"}
-2. 等分散性確認：{"合格（均一）" if is_equal_var else "不合格（不均一）"}
-⇒ 上記の結果に基づき、最もエラーの少ない手法として「{method_name}」を自動選択しました。
-"""
+{analysis_path}
 
 1. この解析で何を確認したか：
    各グループの数値の平均に、意味のある「違い」があるかどうかを調べました。
@@ -246,7 +252,7 @@ analysis_path = f"""
 5. 結論：
    解析の結果、今回のデータからは統計学的な裏付けが得られました。この内容に基づき、有意差ラベルを付与したグラフを作成しました。
             """
-            st.text_area("コピペ用レポート", value=full_report, height=350)
+            st.text_area("コピペ用レポート", value=full_report, height=450)
 
     st.divider()
 
