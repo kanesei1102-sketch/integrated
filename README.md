@@ -1,4 +1,4 @@
-# 🔬 Ultimate Sci-Stat & Graph Engine (Pro Ver.)
+# 🔬 Smart-Stat Engine (Pro Ver.)
 
 An integrated statistical analysis and publication-grade graphing tool designed for life sciences. 
 It automatically diagnoses data distribution and selects the most appropriate statistical tests.
