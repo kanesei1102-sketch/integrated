@@ -261,15 +261,23 @@ if len(data_dict) >= 2:
 # ---------------------------------------------------------
 if len(data_dict) >= 1:
     st.header("3. グラフ生成 (Auto-Labeling)")
-    
     try:
         plt.rcParams['font.family'] = 'sans-serif'
-        fig, ax = plt.subplots(figsize=(6, fig_height))
+        
+        # --- レイアウト計算 ---
+        # 1. 箱の太さ (bar_width) はユーザー指定
+        # 2. グループ間の距離 (group_spacing) もユーザー指定
+        # 3. 図全体の幅 (auto_width) は、(データ数 * 間隔) に比例して自動計算
+        base_scale = 1.5
+        auto_width = max(6.0, len(data_dict) * base_scale * group_spacing)
+        
+        fig, ax = plt.subplots(figsize=(auto_width, fig_height))
         
         group_names = list(data_dict.keys())
-        x_positions = np.arange(len(group_names))
         
-        # Y軸の最大値計算 (安全策)
+        # X軸の座標を spacing に基づいて計算 (0, 1*gap, 2*gap ...)
+        x_positions = np.arange(len(group_names)) * group_spacing
+        
         all_vals_flat = [v for sub in data_dict.values() for v in sub if len(sub) > 0]
         max_val = np.max(all_vals_flat) if all_vals_flat else 1.0
         
@@ -277,55 +285,59 @@ if len(data_dict) >= 1:
         for i, (name, vals) in enumerate(data_dict.items()):
             if len(vals) == 0: continue
             vals = np.array(vals)
+            pos = x_positions[i] # 計算済みの座標を使用
             
             mean_v = np.mean(vals)
             std_v = np.std(vals, ddof=1) if len(vals) > 1 else 0
             sem_v = std_v / np.sqrt(len(vals)) if len(vals) > 0 else 0
             err = sem_v if error_type == "SEM" else std_v
-            
             my_color = group_colors.get(name, "#333333")
 
             if "棒" in graph_type:
-                ax.bar(i, mean_v, width=bar_width, color=my_color, edgecolor='black', alpha=0.8, zorder=1)
-                ax.errorbar(i, mean_v, yerr=err, fmt='none', color='black', capsize=5, zorder=2)
+                # width引数に bar_width をそのまま渡す
+                ax.bar(pos, mean_v, width=bar_width, color=my_color, edgecolor='black', alpha=0.8, zorder=1)
+                ax.errorbar(pos, mean_v, yerr=err, fmt='none', color='black', capsize=5, zorder=2)
             elif "箱" in graph_type:
-                ax.boxplot(vals, positions=[i], widths=bar_width, patch_artist=True,
+                ax.boxplot(vals, positions=[pos], widths=bar_width, patch_artist=True,
                            boxprops=dict(facecolor=my_color, alpha=0.8), medianprops=dict(color='black'), showfliers=False)
             elif "バイオリン" in graph_type:
-                parts = ax.violinplot(vals, positions=[i], widths=bar_width, showextrema=False)
+                parts = ax.violinplot(vals, positions=[pos], widths=bar_width, showextrema=False)
                 for pc in parts['bodies']:
-                    pc.set_facecolor(my_color)
-                    pc.set_alpha(0.8)
+                    pc.set_facecolor(my_color); pc.set_alpha(0.8)
             
             if dot_size > 0:
+                # Jitterも bar_width に合わせて調整すると綺麗だが、今回は単純な乱数で
                 noise = np.random.normal(0, jitter_strength, len(vals))
-                ax.scatter(x_positions[i] + noise, vals, s=dot_size, color='white', edgecolor='gray', zorder=3, alpha=dot_alpha)
+                ax.scatter(pos + noise, vals, s=dot_size, color='white', edgecolor='gray', zorder=3, alpha=dot_alpha)
 
-        # --- B. 有意差バーの自動描画 ---
+        # --- B. 有意差バー ---
         y_step = max_val * 0.15
-        current_y = max_val * 1.15 # 初期位置を少し高めに
+        current_y = max_val * 1.15
         
         for pair in sig_pairs:
             try:
                 idx1 = group_names.index(pair['g1'])
                 idx2 = group_names.index(pair['g2'])
-                x1, x2 = idx1, idx2
+                # 座標を x_positions から取得
+                x1, x2 = x_positions[idx1], x_positions[idx2]
+                
                 bar_h = current_y
                 col_h = max_val * 0.03
-                
                 ax.plot([x1, x1, x2, x2], [bar_h-col_h, bar_h, bar_h, bar_h-col_h], lw=1.5, c='black')
                 ax.text((x1+x2)/2, bar_h, pair['label'], ha='center', va='bottom', fontsize=14)
-                
                 current_y += y_step
             except: pass
 
-        # --- C. レイアウト仕上げ ---
+        # --- C. 軸設定 ---
         ax.set_xticks(x_positions)
         ax.set_xticklabels(group_names, fontsize=12)
         ax.set_ylabel(y_axis_label, fontsize=12)
         ax.set_title(fig_title, fontsize=14)
         
-        # Y軸範囲設定
+        # 左右の余白調整 (間隔に応じて広げる)
+        margin = 0.8 * group_spacing
+        ax.set_xlim(min(x_positions) - margin, max(x_positions) + margin)
+
         if manual_y_max > 0:
             ax.set_ylim(0, manual_y_max)
         else:
@@ -335,15 +347,12 @@ if len(data_dict) >= 1:
         ax.spines['right'].set_visible(False)
         
         st.pyplot(fig)
-        
         img_buf = io.BytesIO()
         fig.savefig(img_buf, format='png', bbox_inches='tight', dpi=300)
         now_str = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
         st.download_button("📥 画像を保存 (PNG)", data=img_buf, file_name=f"result_{now_str}.png", mime="image/png")
-        
     except Exception as e:
         st.error(f"描画エラー: {e}")
-
 else:
     st.info("データを入力してください (手動 または CSV)")
 
