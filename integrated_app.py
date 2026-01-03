@@ -9,29 +9,24 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd
 import scikit_posthocs as sp
 
 # ---------------------------------------------------------
-# 0. ページ設定 (Page Config)
+# 0. ページ設定
 # ---------------------------------------------------------
 st.set_page_config(page_title="Ultimate Sci-Stat & Graph Engine", layout="wide")
 
 # ---------------------------------------------------------
-# 1. サイドバー設定 (Sidebar UI)
+# 1. サイドバー設定
 # ---------------------------------------------------------
 with st.sidebar:
-    # --- 最上部: Notice (ご指定の文章に差し替え) ---
-    st.markdown("### 【Notice / ご案内】")
+    st.markdown("### 【ご案内】")
     st.info("""
-    This tool is a beta version. If you plan to use results from this tool in your publications or conference presentations, **please contact the developer (Seiji Kaneko) in advance.**
+    本ツールは、信頼性の高い標準統計ライブラリ（SciPy, Statsmodels等）を実行するためのインターフェースです。
+    
+    論文記載時は「独自ソフト」ではなく「PythonのSciPyライブラリ等を使用した」と記述することで、査読時の信頼性が担保されます。
 
-    本ツールは現在開発中のベータ版です。論文掲載や学会発表等に使用される際は、**事前に開発者（金子）まで必ず一報ください。**
-
-    👉 **[Contact & Feedback Form / 連絡窓口](https://forms.gle/xgNscMi3KFfWcuZ1A)**
-
-    We will provide guidance on validation support and proper acknowledgments/co-authorship.
-    バリデーションのサポートや、謝辞・共著の記載についてご案内させていただきます。
+    👉 **[お問い合わせ・フィードバック](https://forms.gle/xgNscMi3KFfWcuZ1A)**
     """)
     st.divider()
 
-    # --- 中部: グラフ設定 ---
     st.header("🛠️ グラフ設定")
     
     with st.expander("📈 グラフの種類", expanded=True):
@@ -41,17 +36,15 @@ with st.sidebar:
         else:
             error_type = "None"
         
-    with st.expander("🎨 デザイン微調整", expanded=True):
-        fig_title = st.text_input("図のタイトル", value="Experiment Result")
-        y_axis_label = st.text_input("Y軸ラベル", value="Relative Value")
+    with st.expander("🎨 デザイン調整", expanded=True):
+        fig_title = st.text_input("図のタイトル", value="実験結果")
+        y_axis_label = st.text_input("Y軸ラベル", value="相対値")
         manual_y_max = st.number_input("Y軸最大値 (0で自動)", value=0.0, step=1.0)
         
         st.divider()
-        st.caption("間隔と太さの調整")
-        
-        # ★★★ ここで変数を定義しています ★★★
-        group_spacing = st.slider("↔️ グループ間の距離 (間隔)", 0.8, 3.0, 1.2, 0.1, help="X軸の目盛り間隔を広げます。")
-        bar_width = st.slider("⬛ 棒/箱の太さ (幅)", 0.1, 1.5, 0.6, 0.1, help="オブジェクト自体の太さを変更します。")
+        st.caption("間隔と太さ")
+        group_spacing = st.slider("↔️ グループ間の距離", 0.8, 3.0, 1.2, 0.1)
+        bar_width = st.slider("⬛ 棒/箱の太さ", 0.1, 1.5, 0.6, 0.1)
         
         st.caption("ドット・その他")
         dot_size = st.slider("ドットサイズ", 0, 100, 20)
@@ -60,11 +53,12 @@ with st.sidebar:
         fig_height = st.slider("画像の高さ", 3.0, 10.0, 5.0)
 
 # ---------------------------------------------------------
-# 2. メインエリア：データ入力 (Main Input)
+# 2. メインエリア：データ入力
 # ---------------------------------------------------------
 st.title("🔬 Ultimate Sci-Stat & Graph Engine")
 st.markdown("""
-**統計解析から論文グレードのグラフ作成までを自動化する統合ツール (Pro Ver.)** データの性質を自動診断し、最適な検定を選択。有意差バー付きのグラフを一瞬で作成します。
+**標準ライブラリ (SciPy, Statsmodels) を用いた統計解析とグラフ作成ツール**
+データの正規性・等分散性を自動診断し、適切な検定手法を自動選択します。
 """)
 
 st.subheader("1. データ入力")
@@ -86,7 +80,7 @@ with tab_manual:
     for i in range(st.session_state.g_count):
         with cols[i % 4]:
             def_name = f"Group {i+1}"
-            name = st.text_input(f"名前 {i+1}", value=def_name, key=f"n{i}")
+            name = st.text_input(f"グループ名 {i+1}", value=def_name, key=f"n{i}")
             raw = st.text_area(f"データ {i+1}", height=120, key=f"d{i}", placeholder="10.5\n12.3")
             vals = [float(x.strip()) for x in raw.replace(',', '\n').split('\n') if x.strip()]
             if len(vals) > 0: data_dict[name] = vals
@@ -111,7 +105,7 @@ with tab_csv:
             st.error(f"読み込みエラー: {e}")
 
 # ---------------------------------------------------------
-# 3. サイドバー追記：グループカラー設定 (Dynamic Color)
+# 3. グループカラー設定
 # ---------------------------------------------------------
 group_colors = {}
 if data_dict:
@@ -123,7 +117,7 @@ if data_dict:
                 group_colors[g_name] = st.color_picker(f"{g_name} の色", col_def)
 
 # ---------------------------------------------------------
-# 4. 統計解析エンジン (Logic Core)
+# 4. 統計解析エンジン (SciPy Wrapper)
 # ---------------------------------------------------------
 def get_sig_label(p):
     if p < 0.001: return "***"
@@ -139,7 +133,6 @@ if len(data_dict) >= 2:
     group_names = list(data_dict.keys())
     all_values = list(data_dict.values())
     
-    # 診断: データ数チェック
     valid_data_count = all(len(v) >= 2 for v in all_values)
     
     if not valid_data_count:
@@ -159,18 +152,20 @@ if len(data_dict) >= 2:
         except:
             is_equal_var = True
 
-        # 検定ロジック
         method_name = ""
+        lib_name = ""
         p_global = 1.0
         
         # --- 2群比較 ---
         if len(data_dict) == 2:
             g1, g2 = all_values[0], all_values[1]
             if all_normal:
-                method_name = "Student's t-test" if is_equal_var else "Welch's t-test"
+                method_name = "Studentのt検定" if is_equal_var else "Welchのt検定"
+                lib_name = "scipy.stats.ttest_ind"
                 _, p_global = stats.ttest_ind(g1, g2, equal_var=is_equal_var)
             else:
-                method_name = "Mann-Whitney U test"
+                method_name = "Mann-WhitneyのU検定"
+                lib_name = "scipy.stats.mannwhitneyu"
                 _, p_global = stats.mannwhitneyu(g1, g2, alternative='two-sided')
                 
             if p_global < 0.05:
@@ -179,7 +174,8 @@ if len(data_dict) >= 2:
         # --- 3群以上比較 ---
         else:
             if all_normal and is_equal_var:
-                method_name = "One-way ANOVA + Tukey's HSD"
+                method_name = "一元配置分散分析 (ANOVA) + Tukey法"
+                lib_name = "scipy.stats.f_oneway & statsmodels"
                 _, p_global = stats.f_oneway(*all_values)
                 
                 if p_global < 0.05:
@@ -192,7 +188,8 @@ if len(data_dict) >= 2:
                         if row['reject']:
                             sig_pairs.append({'g1': row['group1'], 'g2': row['group2'], 'label': get_sig_label(row['p-adj']), 'p': row['p-adj']})
             else:
-                method_name = "Kruskal-Wallis + Dunn's test"
+                method_name = "Kruskal-Wallis検定 + Dunn検定"
+                lib_name = "scipy.stats.kruskal & scikit_posthocs"
                 _, p_global = stats.kruskal(*all_values)
                 
                 if p_global < 0.05:
@@ -207,90 +204,53 @@ if len(data_dict) >= 2:
                             if p_val < 0.05:
                                 sig_pairs.append({'g1': n1, 'g2': n2, 'label': get_sig_label(p_val), 'p': p_val})
 
-        
+        result_summary = "【有意差あり】" if p_global < 0.05 else "【有意差なし】"
 
-       # レポートの解説文生成 (日本語)
-        if all_normal and is_equal_var:
-            easy_reason = "データの分布が偏っておらず、バラツキも均一だったため、最も標準的で精度の高い『パラメトリック検定』を選択しました。"
-        elif not all_normal:
-            easy_reason = "データに極端な偏りや外れ値が見られたため、数値の大小関係（順位）を重視する、外れ値に強い『ノンパラメトリック検定』を選択しました。"
-        else:
-            easy_reason = "データのバラツキが群の間で異なっていたため、その差を補正して計算する手法を選択しました。"
-
-        result_summary = "【有意差あり】グループ間に、偶然とは言い切れない明らかな差が見つかりました。" if p_global < 0.05 else "【有意差なし】グループ間の差は、誤差の範囲内である可能性が高いです。"
-
-        # --- 追加: 判定プロセスの文字列生成 ---
-        # f-stringの中で日本語を使うため、トリプルクォートで確実に囲みます
+        # --- レポート生成：日本語のみ ---
         analysis_path = f"""
-【判定プロセス（自動診断）】
-1. 正規性確認：{"合格（正規分布）" if all_normal else "不合格（非正規分布あり）"}
-2. 等分散性確認：{"合格（均一）" if is_equal_var else "不合格（不均一）"}
-⇒ 上記診断に基づき、統計的に最も妥当な手法として「{method_name}」を自動選択しました。
+【統計手法の選定プロセス】
+1. 正規性の検定 (Shapiro-Wilk): {"正規分布に従う" if all_normal else "正規分布に従わない群あり"}
+2. 等分散性の検定 (Levene): {"分散は等しい" if is_equal_var else "分散は等しくない"}
+⇒ 診断結果に基づき、**{method_name}** を採用しました。
 """
 
-        # レポート表示
         st.success(f"**採用された手法: {method_name}**")
         
-        with st.expander("📝 そのまま使える報告用レポート (詳細)", expanded=True):
-            # analysis_path をレポート本文に埋め込みます
-            full_report = f"""
-【解析報告書：{", ".join(group_names)} の比較】
-
-{analysis_path}
-
-1. この解析で何を確認したか：
-   各グループの数値の平均に、意味のある「違い」があるかどうかを調べました。
-
-2. どの方法で調べたか（その理由）：
-   採用手法：{method_name}
-   理由：{easy_reason}
-   ※ データの形（正規性）やバラツキ（等分散性）を事前にチェックした上で、最も科学的に妥当な手順を選んでいます。
-
-3. 解析の結果：
-   判定：{result_summary}
-   全体のP値：{p_global:.4e}
-   （※P値が0.05より小さければ、統計学的に「差がある」と判断します）
-
-4. 個別の違い（多重比較）：
-   {"3群以上の比較のため、各ペアを総当たりで調べ、厳しい基準で有意差を判定しました。" if len(data_dict) > 2 else "2つのグループを直接比較しました。"}
-
-5. 結論：
-   解析の結果、今回のデータからは統計学的な裏付けが得られました。この内容に基づき、有意差ラベルを付与したグラフを作成しました。
+        with st.expander("📝 論文・レポート用記述案 (Methods)", expanded=True):
+            methods_text = f"""
+統計解析にはPython環境下のSciPyライブラリ等を用いた。
+データの正規性はShapiro-Wilk検定、等分散性はLevene検定により確認した。
+群間の比較には {method_name} を用いた。
+P値 0.05 未満を統計学的に有意とみなした。
             """
-            st.text_area("コピペ用レポート", value=full_report, height=450)
+            st.text_area("Methods記述案 (日本語)", value=methods_text, height=150)
 
     st.divider()
 
 # ---------------------------------------------------------
-# 5. グラフ描画エンジン (Visualization Core)
+# 5. グラフ描画エンジン
 # ---------------------------------------------------------
 if len(data_dict) >= 1:
-    st.header("3. グラフ生成 (Auto-Labeling)")
+    st.header("3. グラフ生成 (自動ラベリング)")
     try:
+        # 日本語フォント設定（環境によっては文字化けする可能性がありますが、標準的な設定）
         plt.rcParams['font.family'] = 'sans-serif'
         
-        # --- レイアウト計算 ---
-        # 1. 箱の太さ (bar_width) はユーザー指定
-        # 2. グループ間の距離 (group_spacing) もユーザー指定
-        # 3. 図全体の幅 (auto_width) は、(データ数 * 間隔) に比例して自動計算
         base_scale = 1.5
         auto_width = max(6.0, len(data_dict) * base_scale * group_spacing)
         
         fig, ax = plt.subplots(figsize=(auto_width, fig_height))
         
         group_names = list(data_dict.keys())
-        
-        # X軸の座標を spacing に基づいて計算 (0, 1*gap, 2*gap ...)
         x_positions = np.arange(len(group_names)) * group_spacing
         
         all_vals_flat = [v for sub in data_dict.values() for v in sub if len(sub) > 0]
         max_val = np.max(all_vals_flat) if all_vals_flat else 1.0
         
-        # --- A. プロット描画 ---
         for i, (name, vals) in enumerate(data_dict.items()):
             if len(vals) == 0: continue
             vals = np.array(vals)
-            pos = x_positions[i] # 計算済みの座標を使用
+            pos = x_positions[i]
             
             mean_v = np.mean(vals)
             std_v = np.std(vals, ddof=1) if len(vals) > 1 else 0
@@ -299,7 +259,6 @@ if len(data_dict) >= 1:
             my_color = group_colors.get(name, "#333333")
 
             if "棒" in graph_type:
-                # width引数に bar_width をそのまま渡す
                 ax.bar(pos, mean_v, width=bar_width, color=my_color, edgecolor='black', alpha=0.8, zorder=1)
                 ax.errorbar(pos, mean_v, yerr=err, fmt='none', color='black', capsize=5, zorder=2)
             elif "箱" in graph_type:
@@ -311,11 +270,9 @@ if len(data_dict) >= 1:
                     pc.set_facecolor(my_color); pc.set_alpha(0.8)
             
             if dot_size > 0:
-                # Jitterも bar_width に合わせて調整すると綺麗だが、今回は単純な乱数で
                 noise = np.random.normal(0, jitter_strength, len(vals))
                 ax.scatter(pos + noise, vals, s=dot_size, color='white', edgecolor='gray', zorder=3, alpha=dot_alpha)
 
-        # --- B. 有意差バー ---
         y_step = max_val * 0.15
         current_y = max_val * 1.15
         
@@ -323,7 +280,6 @@ if len(data_dict) >= 1:
             try:
                 idx1 = group_names.index(pair['g1'])
                 idx2 = group_names.index(pair['g2'])
-                # 座標を x_positions から取得
                 x1, x2 = x_positions[idx1], x_positions[idx2]
                 
                 bar_h = current_y
@@ -333,13 +289,11 @@ if len(data_dict) >= 1:
                 current_y += y_step
             except: pass
 
-        # --- C. 軸設定 ---
         ax.set_xticks(x_positions)
         ax.set_xticklabels(group_names, fontsize=12)
         ax.set_ylabel(y_axis_label, fontsize=12)
         ax.set_title(fig_title, fontsize=14)
         
-        # 左右の余白調整 (間隔に応じて広げる)
         margin = 0.8 * group_spacing
         ax.set_xlim(min(x_positions) - margin, max(x_positions) + margin)
 
@@ -362,16 +316,12 @@ else:
     st.info("データを入力してください (手動 または CSV)")
 
 # ---------------------------------------------------------
-# 6. サイドバー最下部：免責事項 (Disclaimer)
+# 6. サイドバー最下部：免責事項
 # ---------------------------------------------------------
 with st.sidebar:
     st.divider()
-    st.caption("【免責事項 / Disclaimer】")
+    st.caption("【免責事項】")
     st.caption("""
-    本ツールは統計学的判断および解析の補助を目的としています。
-    計算には信頼性の高いライブラリを使用していますが、最終的な解釈および結論については、
-    利用者が専門的知見に基づいて判断してください。
-
-    This tool is for assistive purposes. Final interpretations and conclusions 
-    should be made by the user based on professional expertise.
+    本ツールは、SciPy/Statsmodels等のオープンソースライブラリを利用した計算結果を表示するものです。
+    最終的な解釈および結論については、利用者が専門的知見に基づいて判断してください。
     """)
