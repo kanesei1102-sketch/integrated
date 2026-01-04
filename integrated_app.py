@@ -1,14 +1,14 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 import io
+import datetime
 from scipy import stats
 import statsmodels.api as sm
 from statsmodels.formula.api import ols
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
+from statsmodels.graphics.factorplots import interaction_plot
 
 # ---------------------------------------------------------
 # ライブラリの安全なインポート
@@ -22,7 +22,7 @@ except ImportError:
 # ---------------------------------------------------------
 # 0. ページ設定
 # ---------------------------------------------------------
-st.set_page_config(page_title="Ultimate Sci-Stat V11 (Interactive)", layout="wide")
+st.set_page_config(page_title="Ultimate Sci-Stat V13 (Matplotlib)", layout="wide")
 
 # ---------------------------------------------------------
 # 1. 共通関数 (Logic)
@@ -47,7 +47,7 @@ def clean_data_for_log(vals):
     arr = np.array(vals)
     positive = arr[arr > 0]
     if len(positive) < len(arr):
-        return positive.tolist(), True # 除外あり
+        return positive.tolist(), True
     return positive.tolist(), False
 
 def check_data_validity(values_list):
@@ -61,7 +61,6 @@ def get_sig_label(p):
     return "ns"
 
 def run_fallback_posthoc(groups_vals, group_names):
-    """Fallback Posthoc (Bonferroni-MannWhitney)"""
     sig_pairs = []
     n_groups = len(groups_vals)
     n_pairs = (n_groups * (n_groups - 1)) / 2
@@ -71,16 +70,15 @@ def run_fallback_posthoc(groups_vals, group_names):
         for j in range(i+1, n_groups):
             try:
                 _, p = stats.mannwhitneyu(groups_vals[i], groups_vals[j], alternative='two-sided')
-                p_adj = p * n_pairs
+                p_adj = p * n_pairs 
                 if p_adj < 0.05:
                     sig_pairs.append({'g1': group_names[i], 'g2': group_names[j], 'label': get_sig_label(p_adj)})
             except: pass
     return sig_pairs
 
 def auto_select_test(groups_vals):
-    """統計検定の自動選択ロジック"""
     if not check_data_validity(groups_vals):
-        return 1.0, "データ不足 (N<2)", False
+        return 1.0, "データ不足 (N<2)", False, "データ不足"
 
     all_normal = True
     for v in groups_vals:
@@ -92,30 +90,36 @@ def auto_select_test(groups_vals):
 
     method_name = ""
     p_val = 1.0
+    reason = ""
 
     if len(groups_vals) == 2:
         if all_normal:
             if is_equal_var:
                 method_name = "Student's t-test"
                 _, p_val = stats.ttest_ind(groups_vals[0], groups_vals[1], equal_var=True)
+                reason = "正規分布かつ等分散"
             else:
                 method_name = "Welch's t-test"
                 _, p_val = stats.ttest_ind(groups_vals[0], groups_vals[1], equal_var=False)
+                reason = "正規分布だが不等分散"
         else:
             method_name = "Mann-Whitney U"
             _, p_val = stats.mannwhitneyu(groups_vals[0], groups_vals[1], alternative='two-sided')
+            reason = "非正規分布 (または外れ値)"
     else:
         if all_normal and is_equal_var:
             method_name = "One-way ANOVA"
             _, p_val = stats.f_oneway(*groups_vals)
+            reason = "正規分布かつ等分散"
         else:
             method_name = "Kruskal-Wallis"
             _, p_val = stats.kruskal(*groups_vals)
+            reason = "非正規分布 (または不等分散)"
 
-    return p_val, method_name, all_normal
+    return p_val, method_name, all_normal, reason
 
 def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
-    """有意差バー配置 (Tetris Algorithm)"""
+    """Tetris Algorithm for Stacking"""
     bars_to_draw = []
     levels = {}
 
@@ -134,7 +138,8 @@ def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
         while True:
             collision = False
             for (occ_x1, occ_x2, _) in levels.get(lvl, []):
-                if not (x2 < occ_x1 - 0.05 or x1 > occ_x2 + 0.05): 
+                # マージンを持たせて重なり判定
+                if not (x2 < occ_x1 - 0.1 or x1 > occ_x2 + 0.1): 
                     collision = True
                     break
             if not collision: break
@@ -153,279 +158,224 @@ def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
     return bars_to_draw
 
 # ---------------------------------------------------------
-# 2. 描画関数 (Plotly Interactive)
+# 2. 描画関数 (Matplotlib Robust)
 # ---------------------------------------------------------
 
-def draw_plotly_1factor(data_dict, sig_pairs, config, is_norm):
+def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
+    # 日本語フォント設定 (環境依存回避のため英語フォント推奨だが、文字化け対策でsans-serif)
+    plt.rcParams['font.family'] = 'sans-serif'
+    
     group_names = list(data_dict.keys())
+    all_values = list(data_dict.values())
     
-    fig = go.Figure()
+    # 幅計算
+    fig_w = config['width'] if config['width'] > 0 else max(6.0, len(data_dict) * 1.5 * config['spacing'])
+    fig, ax = plt.subplots(figsize=(fig_w, config['height']))
     
-    # データ処理 & 描画
-    all_flat = []
-    base_y_map = {} # for sig bars
+    x_pos = np.arange(len(group_names)) * config['spacing']
+    name_to_x = {name: x for name, x in zip(group_names, x_pos)}
     
-    for i, name in enumerate(group_names):
-        vals = data_dict[name]
-        
-        # Log Safety Check
-        if config['scale'] == "対数 (Log)":
-            vals, removed = clean_data_for_log(vals)
-            if removed: st.toast(f"⚠️ {name}: 0以下の値を除外しました (Log Scale)", icon="ℹ️")
-            if not vals: continue
+    all_flat = [x for sub in all_values for x in sub]
+    max_v = max(all_flat) if all_flat else 1
+    # Log scale safety
+    pos_vals = [x for x in all_flat if x > 0]
+    min_pos_v = min(pos_vals) if pos_vals else 0.01
+    
+    base_y_map = {} 
+    final_type = config['manual_type'] if config['mode'].startswith("手動") else ("箱ひげ図 (Box)" if not is_norm else "棒グラフ (Bar)")
 
-        all_flat.extend(vals)
+    # Plot Data
+    for i, (name, vals) in enumerate(data_dict.items()):
+        vals = np.array(vals); p = x_pos[i]
+        
+        # Log Safety
+        if config['scale'] == "対数 (Log)":
+            vals_plot, _ = clean_data_for_log(vals)
+            vals_plot = np.array(vals_plot)
+        else:
+            vals_plot = vals
+
+        mean = np.mean(vals_plot) if len(vals_plot)>0 else 0
+        std = np.std(vals_plot, ddof=1) if len(vals_plot)>1 else 0
+        sem = std/np.sqrt(len(vals_plot)) if len(vals_plot)>0 else 0
+        err = sem if config['error'].startswith("SEM") else std
         col = config['colors'].get(name, "#333333")
         
-        mean = np.mean(vals)
-        std = np.std(vals, ddof=1) if len(vals)>1 else 0
-        sem = std/np.sqrt(len(vals)) if len(vals)>0 else 0
-        err = sem if config['error'].startswith("SEM") else std
-        
-        # Determine Base Y for stacking
-        top_val = max(vals) if vals else 0
-        if "棒" in config['manual_type'] or (config['mode']=="自動" and is_norm):
-             top_val = mean + (err if config['error'] != "None" else 0)
-        margin = 1.2 if config['scale']=="対数 (Log)" else 1.05
-        base_y_map[name] = top_val * margin
-
-        # Main Trace
-        show_legend = False # 1要因はX軸で分かるので凡例不要
-        final_type = config['manual_type'] if config['mode'].startswith("手動") else ("箱ひげ" if not is_norm else "棒")
-
+        # Base Y
+        top_val = max(vals_plot) if len(vals_plot)>0 else 0
         if "棒" in final_type:
-            fig.add_trace(go.Bar(
-                x=[name], y=[mean], name=name, marker_color=col,
-                error_y=dict(type='data', array=[err], visible=(config['error']!="None")),
-                showlegend=show_legend, opacity=0.8
-            ))
-        elif "箱" in final_type:
-            fig.add_trace(go.Box(
-                y=vals, name=name, marker_color=col, boxpoints=False, # Points handled separately
-                showlegend=show_legend, line=dict(color='black', width=1.5), fillcolor=col
-            ))
-        elif "バイオリン" in final_type:
-            fig.add_trace(go.Violin(
-                y=vals, name=name, line_color=col, points=False,
-                showlegend=show_legend, meanline_visible=True
-            ))
-
-        # Jitter Points (Scatter)
-        if vals:
-            # PlotlyのBoxにはjitterがあるが、あえてScatterで重ねると制御しやすい
-            jitter_x = np.random.normal(0, config['jitter'], size=len(vals))
-            # x軸はカテゴリカルなので、内部的には 0, 1, 2... ではなく文字列。
-            # Plotlyでjitterさせるには、boxpoints='all' jitter=... を使うのが定石だが、
-            # 棒グラフの上に散らす場合は工夫が必要。
-            # ここではシンプルに Box/Violin の標準機能を使うか、Barの場合は Scatter を重ねる。
+            top_val = mean + (err if config['error'] != "None" else 0)
+        
+        margin_ratio = 1.05 if config['scale'].startswith("線形") else 1.2
+        base_y_map[name] = top_val * margin_ratio
+        
+        if "棒" in final_type:
+            ax.bar(p, mean, width=config['bar_width'], color=col, edgecolor='black', alpha=0.8, zorder=1)
+            if config['error'] != "None":
+                ax.errorbar(p, mean, yerr=err, fmt='none', c='black', capsize=5, zorder=2)
+        elif "箱" in final_type and len(vals_plot)>0:
+            ax.boxplot(vals_plot, positions=[p], widths=config['bar_width'], patch_artist=True, 
+                       boxprops=dict(facecolor=col, alpha=0.8), medianprops=dict(color='black'), showfliers=False)
+        elif "バイオリン" in final_type and len(vals_plot)>0:
+            parts = ax.violinplot(vals_plot, positions=[p], widths=config['bar_width'], showextrema=False)
+            for pc in parts['bodies']: pc.set_facecolor(col); pc.set_alpha(0.8)
             
-            if "棒" in final_type:
-                # Barの上に散らすには、Xを数値として扱うか、offsetgroupを使うハックが必要。
-                # 簡易的に: 棒グラフでもBox(visible=False, points='all')を重ねて点を出す
-                fig.add_trace(go.Box(
-                    y=vals, name=name, marker=dict(color='black', size=config['dot_size']/3, opacity=config['dot_alpha']),
-                    boxpoints='all', jitter=config['jitter'], pointpos=0, 
-                    fillcolor='rgba(0,0,0,0)', line=dict(width=0), showlegend=False, hoverinfo='y'
-                ))
-            else:
-                # Box/Violin は自身のプロパティで点を出す
-                fig.update_traces(selector=dict(name=name), boxpoints='all', jitter=config['jitter'], pointpos=0,
-                                  marker=dict(color='black', size=config['dot_size']/3, opacity=config['dot_alpha']))
+        if len(vals_plot) > 0:
+            noise = np.random.normal(0, config['jitter'], len(vals_plot))
+            ax.scatter(p+noise, vals_plot, s=config['dot_size'], facecolors='white', edgecolors='#555555', zorder=3, alpha=config['dot_alpha'])
 
     # Sig Bars
-    max_v = max(all_flat) if all_flat else 1
     step_y = max_v * 0.1
     is_log = config['scale'] == "対数 (Log)"
+    if is_log: ax.set_yscale('log')
     
-    # PlotlyのX軸はカテゴリカル名そのまま。
-    # Tetris計算のために index マッピングを作る
-    name_to_idx = {name: i for i, name in enumerate(group_names)}
+    bars = calculate_sig_bars_layout(sig_pairs, name_to_x, base_y_map, step_y, is_log)
     
-    bars = calculate_sig_bars_layout(sig_pairs, name_to_idx, base_y_map, step_y, is_log)
-    
-    shapes = []
-    annotations = []
-    
+    global_max_y = max_v
     for b in bars:
-        # Plotly shape uses relative coordinates (0 to 1) or data coordinates.
-        # Categorical Axis: 0, 1, 2... corresponds to names
-        x0, x1, y, label = b['x1'], b['x2'], b['y'], b['label']
-        
-        # Line shape
-        shapes.append(dict(
-            type="path",
-            path=f"M {x0},{y*0.98} L {x0},{y} L {x1},{y} L {x1},{y*0.98}",
-            line=dict(color="black", width=1.5),
-            xref="x", yref="y"
-        ))
-        # Text
-        annotations.append(dict(
-            x=(x0+x1)/2, y=y, text=label, showarrow=False, yanchor='bottom', font=dict(size=14)
-        ))
+        x1, x2, y, label = b['x1'], b['x2'], b['y'], b['label']
+        ax.plot([x1, x1, x2, x2], [y*0.98, y, y, y*0.98], lw=1.5, c='black')
+        ax.text((x1+x2)/2, y, label, ha='center', va='bottom', fontsize=12)
+        if y > global_max_y: global_max_y = y
 
-    # Layout Update
-    fig.update_layout(
-        title=config['title'],
-        yaxis_title=config['ylabel'],
-        yaxis_type="log" if is_log else "linear",
-        shapes=shapes,
-        annotations=annotations,
-        width=config['width'] if config['width']>0 else None,
-        height=config['height']*100, # Matplotlib inch -> Plotly px conversion approx
-        template="simple_white",
-        showlegend=False
-    )
+    ax.set_xticks(x_pos)
+    ax.set_xticklabels(group_names, fontsize=12)
+    ax.set_ylabel(config['ylabel'], fontsize=12)
+    ax.set_title(config['title'], fontsize=14)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     
+    if config['manual_y_max'] > 0:
+        ax.set_ylim(bottom=None, top=config['manual_y_max'])
+    else:
+        top_margin = 1.1 if not is_log else 1.5
+        bottom_val = 0 if not is_log else min_pos_v * 0.5
+        if config['scale'].startswith("線形") and config['auto_zoom']:
+             ax.set_ylim(bottom=0, top=global_max_y * top_margin)
+        else:
+             ax.set_ylim(bottom=bottom_val, top=global_max_y * top_margin)
+
     return fig
 
-def draw_plotly_2factor(df_raw, grouped_data, sig_res_map, config, sub_names):
-    # 2要因は Grouped Bar / Box
-    fig = go.Figure()
+def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names):
+    plt.rcParams['font.family'] = 'sans-serif'
     
-    majors = list(grouped_data.keys())
-    
-    # Base Y Map for sig bars
-    # {(Major, Sub): top_y} -> Plotlyのカテゴリ軸は "Major" だが、Subごとのoffsetを知る必要がある
-    # Plotlyでは offset を直接取得するのが難しい。
-    # 解決策: X軸を "Major" にし、SubGroupを offsetgroup でずらす。
-    # Sig Bar のX座標計算が複雑になるため、ここでは「各群の最大値」を取得するに留め、
-    # 簡易的に Cluster単位で Sig Bar を描画する（V10同様）
-    
-    all_flat = []
-    
-    for s_name in sub_names:
-        col = config['colors'].get(s_name, "#333333")
-        y_means = []
-        y_errs = []
-        y_raws = [] # list of lists
-        
-        for m in majors:
-            vals = grouped_data[m].get(s_name, [])
-            
-            # Log Safety
-            if config['scale'] == "対数 (Log)":
-                vals, removed = clean_data_for_log(vals)
-                if removed: st.toast(f"⚠️ {m}-{s_name}: Log除外あり", icon="ℹ️")
-
-            all_flat.extend(vals)
-            y_raws.append(vals)
-            
-            if vals:
-                mean = np.mean(vals)
-                std = np.std(vals, ddof=1) if len(vals)>1 else 0
-                sem = std/np.sqrt(len(vals)) if len(vals)>0 else 0
-                err = sem if config['error'].startswith("SEM") else std
-                y_means.append(mean)
-                y_errs.append(err)
-            else:
-                y_means.append(0); y_errs.append(0)
-
-        # Add Trace
-        if "棒" in config['manual_type']:
-            fig.add_trace(go.Bar(
-                name=s_name, x=majors, y=y_means,
-                marker_color=col, opacity=0.8,
-                error_y=dict(type='data', array=y_errs, visible=(config['error']!="None")),
-                offsetgroup=s_name
-            ))
-            # Jitter Points on Bar
-            # Scatterを重ねる際、xをずらす必要がある。
-            # offsetgroupがある場合、x + offset が必要だが Plotly Pythonだけでは計算が面倒。
-            # ここではBox(visible=False)トリックを使う
-            for idx, m in enumerate(majors):
-                vals = y_raws[idx]
-                if vals:
-                    fig.add_trace(go.Box(
-                        name=s_name, x=[m]*len(vals), y=vals,
-                        marker=dict(color='black', size=config['dot_size']/3, opacity=config['dot_alpha']),
-                        boxpoints='all', jitter=config['jitter'], pointpos=0,
-                        fillcolor='rgba(0,0,0,0)', line=dict(width=0), showlegend=False,
-                        offsetgroup=s_name, hoverinfo='y'
-                    ))
-
-        else:
-            # Grouped Boxplot
-            # Plotly handles grouped box automatically via x and color/name
-            # We need to flatten data for Box trace
-            box_x = []
-            box_y = []
-            for idx, m in enumerate(majors):
-                box_x.extend([m]*len(y_raws[idx]))
-                box_y.extend(y_raws[idx])
-            
-            fig.add_trace(go.Box(
-                name=s_name, x=box_x, y=box_y,
-                marker_color=col,
-                boxpoints='all', jitter=config['jitter'], pointpos=0,
-                marker=dict(color='black', size=config['dot_size']/3, opacity=config['dot_alpha']),
-                line=dict(color='black', width=1.5), fillcolor=col,
-                offsetgroup=s_name
-            ))
-
-    # --- Sig Bars (Cluster Local) ---
-    # PlotlyのGrouped BarにおけるX座標は、各カテゴリ(Major)の中心が整数(0, 1, 2...)
-    # offsetgroupの幅や位置は layout.barmode='group' で決まる。
-    # デフォルトでは width=0.8 を sub_names数 で割った幅になる。
-    
-    # 簡易計算:
+    n_major = len(grouped_data)
     n_sub = len(sub_names)
-    group_width = 0.8
-    bar_w = group_width / n_sub
-    # offsets: -0.4 + w/2, ... 
-    offsets = np.linspace(-group_width/2 + bar_w/2, group_width/2 - bar_w/2, n_sub)
     
-    # Base Y per (Major, Sub)
-    base_y_map = {}
-    for m in majors:
-        for s in sub_names:
-            v = grouped_data[m].get(s, [])
-            if config['scale']=="対数 (Log)": v, _ = clean_data_for_log(v)
-            top = max(v) if v else 0
-            if "棒" in config['manual_type']:
-                # Err bar logic approx
-                if len(v) > 1: top += (np.std(v, ddof=1) if len(v)>1 else 0)
-            margin = 1.2 if config['scale']=="対数 (Log)" else 1.05
-            base_y_map[(m, s)] = top * margin
-
-    max_v = max(all_flat) if all_flat else 1
-    step_y = max_v * 0.1
+    # 幅計算
+    fig_w = config['width'] if config['width'] > 0 else max(6.0, n_major * n_sub * 0.8)
+    fig, ax = plt.subplots(figsize=(fig_w, config['height']))
+    
+    x_base = np.arange(n_major)
+    w = config['bar_width']
+    # 棒の中心オフセット計算
+    total_group_width = w * n_sub * 1.1 # 1.1は棒間の隙間
+    offsets = np.linspace(-total_group_width/2 + w/2, total_group_width/2 - w/2, n_sub)
+    
+    all_raw = df_raw['Val'].tolist()
+    max_v = max(all_raw) if all_raw else 1
+    # Log safety
+    pos_vals = [x for x in all_raw if x > 0]
+    min_pos_v = min(pos_vals) if pos_vals else 0.01
+    
+    name_to_x_map = {}
+    base_y_map = {} 
     is_log = config['scale'] == "対数 (Log)"
+    if is_log: ax.set_yscale('log')
     
-    shapes = []
-    annotations = []
+    # --- Draw Data ---
+    for i, s_name in enumerate(sub_names):
+        col = config['colors'].get(s_name, "#333333")
+        
+        # Gather data
+        means, errs, raw_vals_list = [], [], []
+        x_coords = x_base + offsets[i]
+        
+        for j, m_group in enumerate(grouped_data.keys()):
+            v = grouped_data[m_group].get(s_name, [])
+            if is_log: v, _ = clean_data_for_log(v)
+            else: v = v if isinstance(v, list) else []
+            
+            # Map coords
+            name_to_x_map[(m_group, s_name)] = x_coords[j]
+            
+            if len(v) > 0:
+                mean = np.mean(v)
+                std = np.std(v, ddof=1) if len(v)>1 else 0
+                sem = std/np.sqrt(len(v)) if len(v)>0 else 0
+                err = sem if config['error'].startswith("SEM") else std
+                means.append(mean); errs.append(err)
+            else:
+                means.append(0); errs.append(0)
+            raw_vals_list.append(v)
+            
+            # Base Y
+            top = max(v) if len(v)>0 else 0
+            if "棒" in config['manual_type']: 
+                top = (means[-1] + errs[-1]) if len(v)>0 else 0
+            margin = 1.2 if is_log else 1.05
+            base_y_map[(m_group, s_name)] = top * margin
+
+        # Bar
+        if "棒" in config['manual_type']: 
+            ax.bar(x_coords, means, width=w, label=s_name, color=col, edgecolor='black', alpha=0.8, yerr=errs, capsize=4, zorder=1)
+        else:
+            # Boxplot
+            for k, v in enumerate(raw_vals_list):
+                if len(v) > 0:
+                    ax.boxplot(v, positions=[x_coords[k]], widths=w*0.8, patch_artist=True, 
+                               boxprops=dict(facecolor=col, alpha=0.8), medianprops=dict(color='black'), showfliers=False)
+
+        # Scatter
+        for k, v in enumerate(raw_vals_list):
+            if len(v) > 0:
+                noise = np.random.normal(0, config['jitter']*0.05, len(v)) # 2要因は狭いのでJitter控えめ
+                ax.scatter(x_coords[k] + noise, v, s=config['dot_size'], facecolors='white', edgecolors='#555555', zorder=3, alpha=config['dot_alpha'])
+
+    # --- Sig Bars (Cluster Local Tetris) ---
+    global_max_y = max_v
+    step_y = max_v * 0.1
     
-    for m_idx, m_group in enumerate(majors):
+    for m_group in grouped_data.keys():
         pairs = sig_res_map.get(m_group, [])
         if not pairs: continue
         
-        # Local Mapping: SubName -> Relative X from m_idx
-        # m_idx (0, 1...) is the center of the group
-        local_name_to_x = {s: m_idx + offsets[i] for i, s in enumerate(sub_names)}
+        # Local Map
+        local_name_to_x = {s: name_to_x_map[(m_group, s)] for s in sub_names}
         local_base_y = {s: base_y_map[(m_group, s)] for s in sub_names}
         
         bars = calculate_sig_bars_layout(pairs, local_name_to_x, local_base_y, step_y, is_log)
         
         for b in bars:
-            x0, x1, y, label = b['x1'], b['x2'], b['y'], b['label']
-            shapes.append(dict(
-                type="path", path=f"M {x0},{y*0.98} L {x0},{y} L {x1},{y} L {x1},{y*0.98}",
-                line=dict(color="black", width=1.5), xref="x", yref="y"
-            ))
-            annotations.append(dict(
-                x=(x0+x1)/2, y=y, text=label, showarrow=False, yanchor='bottom', font=dict(size=12)
-            ))
+            x1, x2, y, label = b['x1'], b['x2'], b['y'], b['label']
+            ax.plot([x1, x1, x2, x2], [y*0.98, y, y, y*0.98], lw=1.5, c='black')
+            ax.text((x1+x2)/2, y, label, ha='center', va='bottom', fontsize=12)
+            if y > global_max_y: global_max_y = y
 
-    fig.update_layout(
-        title=config['title'], yaxis_title=config['ylabel'],
-        yaxis_type="log" if is_log else "linear",
-        shapes=shapes, annotations=annotations,
-        barmode='group',
-        width=config['width'] if config['width']>0 else None,
-        height=config['height']*100,
-        template="simple_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
+    ax.set_ylabel(config['ylabel'], fontsize=12)
+    ax.set_title(config['title'], fontsize=14)
+    ax.set_xticks(x_base)
+    ax.set_xticklabels(list(grouped_data.keys()), fontsize=12)
     
+    # Legend
+    if "棒" in config['manual_type']:
+        ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
+    else:
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=config['colors'].get(n,'#333'), edgecolor='black', label=n) for n in sub_names]
+        ax.legend(handles=legend_elements, bbox_to_anchor=(1.02, 1), loc='upper left')
+
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    if config['manual_y_max'] > 0:
+        ax.set_ylim(bottom=None, top=config['manual_y_max'])
+    else:
+        top_margin = 1.1 if not is_log else 1.5
+        bottom_val = 0 if not is_log else min_pos_v * 0.5
+        ax.set_ylim(bottom=bottom_val, top=global_max_y * top_margin)
+
     return fig
 
 # ---------------------------------------------------------
@@ -450,6 +400,7 @@ with st.sidebar:
         if analysis_mode.startswith("1要因"):
             graph_mode_ui = st.radio("選択モード", ["自動 (Auto - 推奨)", "手動 (Manual)"])
             scale_option = st.radio("Y軸スケール", ["線形 (Linear)", "対数 (Log)"])
+            auto_zoom = st.checkbox("外れ値除外ズーム", value=False) if scale_option.startswith("線形") else False
             
             manual_graph_type = "棒グラフ (Bar)"
             error_type = "SD (標準偏差)"
@@ -465,31 +416,32 @@ with st.sidebar:
             graph_type_2way = st.selectbox("形式", ["棒グラフ (Bar)", "箱ひげ図 (Box)"])
             error_type = st.radio("エラーバー", ["SD (標準偏差)", "SEM (標準誤差)"]) if "棒" in graph_type_2way else "None"
             scale_option = st.radio("Y軸スケール", ["線形 (Linear)", "対数 (Log)"])
-            graph_mode_ui = "手動"; manual_graph_type = graph_type_2way
+            graph_mode_ui = "手動"; manual_graph_type = graph_type_2way; auto_zoom = False
 
     with st.expander("🎨 デザイン微調整", expanded=False):
         fig_title = st.text_input("タイトル", value="Experiment Result")
         y_axis_label = st.text_input("Y軸ラベル", value="Relative Value")
         manual_y_max = st.number_input("Y軸最大 (0で自動)", value=0.0, step=1.0)
         st.divider()
-        manual_width = st.slider("画像の幅 (0で自動)", 0.0, 2000.0, 0.0, 50.0)
+        manual_width = st.slider("画像の幅 (0で自動)", 0.0, 20.0, 0.0, 0.5)
         fig_height = st.slider("画像の高さ", 3.0, 15.0, 6.0)
         bar_width = st.slider("棒の太さ", 0.1, 1.0, 0.35, 0.05)
+        # 間隔調整: 2要因ではクラスター間の距離として機能させる
         group_spacing = st.slider("間隔", 0.5, 3.0, 1.0, 0.1) if analysis_mode.startswith("1要因") else 1.0
         
         st.caption("ドット・その他")
-        dot_size = st.slider("ドットサイズ", 0, 20, 6)
+        dot_size = st.slider("ドットサイズ", 0, 100, 20)
         dot_alpha = st.slider("ドット透明度", 0.1, 1.0, 0.7)
-        jitter = st.slider("Jitter (散らし)", 0.0, 1.0, 0.3)
+        jitter = st.slider("Jitter (散らし)", 0.0, 1.0, 0.2)
 
 # ---------------------------------------------------------
 # 3. メインエリア：データ入力
 # ---------------------------------------------------------
-st.title("🔬 Ultimate Sci-Stat & Graph Engine V11 (Interactive)")
+st.title("🔬 Ultimate Sci-Stat & Graph Engine V13 (Matplotlib)")
 
 plot_config = {
     'mode': graph_mode_ui, 'manual_type': manual_graph_type, 'scale': scale_option,
-    'error': error_type, 'title': fig_title, 'ylabel': y_axis_label,
+    'error': error_type, 'auto_zoom': auto_zoom, 'title': fig_title, 'ylabel': y_axis_label,
     'width': manual_width, 'height': fig_height, 'bar_width': bar_width, 'spacing': group_spacing,
     'dot_size': dot_size, 'dot_alpha': dot_alpha, 'jitter': jitter, 'colors': {}, 'manual_y_max': manual_y_max
 }
@@ -506,7 +458,6 @@ if analysis_mode.startswith("1要因"):
         c1, c2 = st.columns([1,5])
         if c1.button("＋"): st.session_state.g_cnt += 1
         if c2.button("－"): st.session_state.g_cnt = max(2, st.session_state.g_cnt - 1)
-        
         cols = st.columns(min(st.session_state.g_cnt, 4))
         for i in range(st.session_state.g_cnt):
             with cols[i%4]:
@@ -520,31 +471,22 @@ if analysis_mode.startswith("1要因"):
             try:
                 df = pd.read_csv(up)
                 st.write("プレビュー:", df.head(3))
-                
-                # V11: Smart CSV Loader (Wide Format Support)
-                csv_mode = st.radio("データ形式", ["縦持ち (Tidy)", "横持ち (Wide) - 複数列選択"])
-                
-                if "縦持ち" in csv_mode:
+                if st.radio("形式", ["縦持ち", "横持ち (一括)"]).startswith("縦"):
                     cols = df.columns.tolist()
-                    c_grp = st.selectbox("グループ列", cols)
-                    c_val = st.selectbox("数値列", [c for c in cols if c != c_grp])
+                    c_grp = st.selectbox("G列", cols); c_val = st.selectbox("V列", [c for c in cols if c!=c_grp])
                     if st.button("読込"):
                         for g in df[c_grp].unique():
                             v = df[df[c_grp]==g][c_val].dropna().tolist()
                             clean = [float(x) for x in v if str(x).replace('.','').isdigit()]
                             if clean: data_dict[g] = clean
-                        st.success("完了")
                 else:
-                    # Wide: Select Multiple Columns
-                    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-                    sel_cols = st.multiselect("解析する列を選択", num_cols, default=num_cols[:min(3, len(num_cols))])
-                    if st.button("一括読込"):
-                        for c in sel_cols:
-                            v = df[c].dropna().tolist()
+                    num_cols = df.select_dtypes(include=[np.number]).columns
+                    sel = st.multiselect("列選択", num_cols, default=list(num_cols)[:3])
+                    if st.button("読込"):
+                        for c in sel:
+                            v = df[c].dropna().tolist(); 
                             if v: data_dict[c] = v
-                        st.success(f"{len(data_dict)} グループ読込完了")
-
-            except Exception as e: st.error(f"Error: {e}")
+            except Exception as e: st.error(str(e))
 
 # === 2要因入力 ===
 else:
@@ -561,7 +503,6 @@ else:
         sub_names = []
         for i in range(st.session_state.sub_cnt):
             sub_names.append(st.text_input(f"Sub {i+1}", f"Sub {i+1}", key=f"s{i}"))
-    
     st.divider()
     if mj_grps and sub_names:
         tabs = st.tabs(mj_grps)
@@ -572,7 +513,7 @@ else:
                 for j, s in enumerate(sub_names):
                     with cols[j]:
                         raw = st.text_area(f"{s}", key=f"d2_{i}_{j}")
-                        v = parse_vals(raw)
+                        v = parse_vals(raw); 
                         if v: grouped_data[m][s] = v
 
 # ---------------------------------------------------------
@@ -580,7 +521,7 @@ else:
 # ---------------------------------------------------------
 with st.sidebar:
     with st.expander("🖍️ カラー設定", expanded=True):
-        defs = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3", "#FF6692", "#B6E880"]
+        defs = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3"]
         if analysis_mode.startswith("1要因") and data_dict:
             for i, k in enumerate(data_dict.keys()):
                 plot_config['colors'][k] = st.color_picker(k, defs[i%len(defs)])
@@ -589,14 +530,18 @@ with st.sidebar:
                 plot_config['colors'][k] = st.color_picker(k, defs[i%len(defs)])
 
 # ---------------------------------------------------------
-# 5. 解析実行 & 描画
+# 5. 実行 (Report & Draw)
 # ---------------------------------------------------------
 if analysis_mode.startswith("1要因"):
     if len(data_dict) >= 2 and check_data_validity(data_dict.values()):
         # Calc
-        p_val, method, is_norm = auto_select_test(list(data_dict.values()))
+        p_val, method, is_norm, reason = auto_select_test(list(data_dict.values()))
         st.success(f"解析完了: {method}")
-        
+        with st.expander("📝 詳細レポート", expanded=True):
+            st.markdown(f"**選定根拠**: {reason} -> **{method}**")
+            st.markdown(f"**P値**: {p_val:.4e} ({'有意差あり' if p_val < 0.05 else '有意差なし'})")
+            st.code(f"Statistical analyses were performed using Python ({method}).")
+
         # Posthoc
         sig_pairs = []
         grps = list(data_dict.keys()); vals = list(data_dict.values())
@@ -620,12 +565,14 @@ if analysis_mode.startswith("1要因"):
                 st.warning("scikit-posthocs未導入。代替ロジック(Bonferroni-MannWhitney)を実行")
                 sig_pairs = run_fallback_posthoc(vals, grps)
         
-        # Draw Interactive
+        # Draw (Matplotlib)
         try:
-            fig = draw_plotly_1factor(data_dict, sig_pairs, plot_config, is_norm)
-            st.plotly_chart(fig, use_container_width=True)
+            fig = draw_matplotlib_1factor(data_dict, sig_pairs, plot_config, is_norm)
+            st.pyplot(fig)
+            buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+            st.download_button("📥 画像を保存 (PNG)", buf, file_name="result.png", mime="image/png")
         except Exception as e: st.error(f"描画エラー: {e}")
-    else: st.info("データを入力してください (各群 N>=2)")
+    else: st.info("データを入力してください")
 
 else: # 2要因
     if len(grouped_data) > 0:
@@ -641,20 +588,26 @@ else: # 2要因
             try:
                 model = ols('Val ~ C(A) * C(B)', data=df_a).fit()
                 res = sm.stats.anova_lm(model, typ=2)
-                st.write("▼ 分散分析表"); st.table(res)
-                if res.loc['C(A):C(B)', 'PR(>F)'] < 0.05: st.error("⚠️ 交互作用あり")
-                else: st.success("✅ 交互作用なし")
+                p_int = res.loc['C(A):C(B)', 'PR(>F)']
+                with st.expander("📊 ANOVA結果", expanded=False):
+                    st.write(res)
+                    st.info(f"交互作用: **{'あり' if p_int < 0.05 else 'なし'}** (P={p_int:.4f})")
+                    fig_i, ax_i = plt.subplots()
+                    interaction_plot(x=df_a['A'], trace=df_a['B'], response=df_a['Val'], ax=ax_i)
+                    st.pyplot(fig_i)
             except: st.warning("ANOVA計算不可")
 
             # Simple Effects
             sig_res_map = {}
+            st.subheader("単純主効果 (層別解析)")
+            report_text = ""
+            
             for m, sub in grouped_data.items():
                 s_keys = list(sub.keys()); s_vals = list(sub.values())
                 if not check_data_validity(s_vals): continue
                 
-                # 自動選択ロジック
-                p, method, _ = auto_select_test(s_vals)
-                st.write(f"- **{m}**: P={p:.4f} ({method})")
+                p, method, _, _ = auto_select_test(s_vals)
+                report_text += f"- **{m}**: P={p:.4f} ({method})\n"
                 
                 sig_res_map[m] = []
                 if p < 0.05:
@@ -676,16 +629,19 @@ else: # 2要因
                                         sig_res_map[m].append({'g1': s_keys[i], 'g2': s_keys[j], 'label': get_sig_label(dunn.iloc[i, j])})
                         else:
                             sig_res_map[m] = run_fallback_posthoc(s_vals, s_keys)
+            st.markdown(report_text)
 
-            # Draw Interactive
+            # Draw (Matplotlib)
             try:
-                fig = draw_plotly_2factor(df_a, grouped_data, sig_res_map, plot_config, sub_names)
-                st.plotly_chart(fig, use_container_width=True)
+                fig = draw_matplotlib_2factor(df_a, grouped_data, sig_res_map, plot_config, sub_names)
+                st.pyplot(fig)
+                buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+                st.download_button("📥 画像を保存 (PNG)", buf, file_name="result_2way.png", mime="image/png")
             except Exception as e: st.error(f"描画エラー: {e}")
     else: st.info("データを入力してください")
 
 # ---------------------------------------------------------
-# 6. サイドバー最下部：免責事項
+# 6. 免責事項
 # ---------------------------------------------------------
 with st.sidebar:
     st.divider()
