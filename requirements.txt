@@ -1,7 +1,7 @@
 streamlit
 pandas
 numpy
-matplotlib
 scipy
 statsmodels
 scikit-posthocs
+plotly
