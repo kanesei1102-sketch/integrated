@@ -22,14 +22,13 @@ except ImportError:
 # ---------------------------------------------------------
 # 0. ページ設定
 # ---------------------------------------------------------
-st.set_page_config(page_title="Ultimate Sci-Stat V13 (Matplotlib)", layout="wide")
+st.set_page_config(page_title="Ultimate Sci-Stat V14 (Final Report)", layout="wide")
 
 # ---------------------------------------------------------
 # 1. 共通関数 (Logic)
 # ---------------------------------------------------------
 
 def parse_vals(text):
-    """数値変換の厳密化"""
     if not text: return []
     text = text.replace(',', '\n').translate(str.maketrans('０１２３４５６７８９', '0123456789'))
     vals = []
@@ -43,7 +42,6 @@ def parse_vals(text):
     return vals
 
 def clean_data_for_log(vals):
-    """対数軸用に0以下を除外"""
     arr = np.array(vals)
     positive = arr[arr > 0]
     if len(positive) < len(arr):
@@ -77,49 +75,61 @@ def run_fallback_posthoc(groups_vals, group_names):
     return sig_pairs
 
 def auto_select_test(groups_vals):
-    if not check_data_validity(groups_vals):
-        return 1.0, "データ不足 (N<2)", False, "データ不足"
+    """
+    統計検定の自動選択ロジック (詳細レポート用フラグ付き)
+    Returns: p_val, method_name, is_parametric, context_dict
+    """
+    context = {
+        "small_n": False,
+        "all_normal": True,
+        "is_equal_var": True,
+        "posthoc": "なし"
+    }
 
-    all_normal = True
+    if not check_data_validity(groups_vals):
+        return 1.0, "データ不足", False, context
+
+    # 1. N数チェック
+    if any(len(v) < 3 for v in groups_vals):
+        context["small_n"] = True
+
+    # 2. 正規性検定
     for v in groups_vals:
         if len(v) >= 3:
-            if stats.shapiro(v)[1] <= 0.05: all_normal = False
+            if stats.shapiro(v)[1] <= 0.05: context["all_normal"] = False
     
-    try: _, p_lev = stats.levene(*groups_vals); is_equal_var = (p_lev > 0.05)
-    except: is_equal_var = True
+    # 3. 等分散性検定
+    try: _, p_lev = stats.levene(*groups_vals); context["is_equal_var"] = (p_lev > 0.05)
+    except: context["is_equal_var"] = True
 
     method_name = ""
     p_val = 1.0
-    reason = ""
 
     if len(groups_vals) == 2:
-        if all_normal:
-            if is_equal_var:
+        context["posthoc"] = "-"
+        if context["all_normal"]:
+            if context["is_equal_var"]:
                 method_name = "Student's t-test"
                 _, p_val = stats.ttest_ind(groups_vals[0], groups_vals[1], equal_var=True)
-                reason = "正規分布かつ等分散"
             else:
                 method_name = "Welch's t-test"
                 _, p_val = stats.ttest_ind(groups_vals[0], groups_vals[1], equal_var=False)
-                reason = "正規分布だが不等分散"
         else:
-            method_name = "Mann-Whitney U"
+            method_name = "Mann-Whitney U test"
             _, p_val = stats.mannwhitneyu(groups_vals[0], groups_vals[1], alternative='two-sided')
-            reason = "非正規分布 (または外れ値)"
     else:
-        if all_normal and is_equal_var:
+        if context["all_normal"] and context["is_equal_var"]:
             method_name = "One-way ANOVA"
+            context["posthoc"] = "Tukey-Kramer test"
             _, p_val = stats.f_oneway(*groups_vals)
-            reason = "正規分布かつ等分散"
         else:
-            method_name = "Kruskal-Wallis"
+            method_name = "Kruskal-Wallis test"
+            context["posthoc"] = "Dunn's test (Bonferroni)" if HAS_POSTHOCS else "Mann-Whitney U (Bonferroni)"
             _, p_val = stats.kruskal(*groups_vals)
-            reason = "非正規分布 (または不等分散)"
 
-    return p_val, method_name, all_normal, reason
+    return p_val, method_name, context["all_normal"], context
 
 def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
-    """Tetris Algorithm for Stacking"""
     bars_to_draw = []
     levels = {}
 
@@ -138,7 +148,6 @@ def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
         while True:
             collision = False
             for (occ_x1, occ_x2, _) in levels.get(lvl, []):
-                # マージンを持たせて重なり判定
                 if not (x2 < occ_x1 - 0.1 or x1 > occ_x2 + 0.1): 
                     collision = True
                     break
@@ -158,17 +167,14 @@ def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
     return bars_to_draw
 
 # ---------------------------------------------------------
-# 2. 描画関数 (Matplotlib Robust)
+# 2. 描画関数 (Matplotlib)
 # ---------------------------------------------------------
 
 def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
-    # 日本語フォント設定 (環境依存回避のため英語フォント推奨だが、文字化け対策でsans-serif)
     plt.rcParams['font.family'] = 'sans-serif'
-    
     group_names = list(data_dict.keys())
     all_values = list(data_dict.values())
     
-    # 幅計算
     fig_w = config['width'] if config['width'] > 0 else max(6.0, len(data_dict) * 1.5 * config['spacing'])
     fig, ax = plt.subplots(figsize=(fig_w, config['height']))
     
@@ -177,18 +183,15 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
     
     all_flat = [x for sub in all_values for x in sub]
     max_v = max(all_flat) if all_flat else 1
-    # Log scale safety
     pos_vals = [x for x in all_flat if x > 0]
     min_pos_v = min(pos_vals) if pos_vals else 0.01
     
     base_y_map = {} 
     final_type = config['manual_type'] if config['mode'].startswith("手動") else ("箱ひげ図 (Box)" if not is_norm else "棒グラフ (Bar)")
 
-    # Plot Data
     for i, (name, vals) in enumerate(data_dict.items()):
         vals = np.array(vals); p = x_pos[i]
         
-        # Log Safety
         if config['scale'] == "対数 (Log)":
             vals_plot, _ = clean_data_for_log(vals)
             vals_plot = np.array(vals_plot)
@@ -201,7 +204,6 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
         err = sem if config['error'].startswith("SEM") else std
         col = config['colors'].get(name, "#333333")
         
-        # Base Y
         top_val = max(vals_plot) if len(vals_plot)>0 else 0
         if "棒" in final_type:
             top_val = mean + (err if config['error'] != "None" else 0)
@@ -259,23 +261,18 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
 
 def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names):
     plt.rcParams['font.family'] = 'sans-serif'
-    
     n_major = len(grouped_data)
     n_sub = len(sub_names)
-    
-    # 幅計算
     fig_w = config['width'] if config['width'] > 0 else max(6.0, n_major * n_sub * 0.8)
     fig, ax = plt.subplots(figsize=(fig_w, config['height']))
     
     x_base = np.arange(n_major)
     w = config['bar_width']
-    # 棒の中心オフセット計算
-    total_group_width = w * n_sub * 1.1 # 1.1は棒間の隙間
+    total_group_width = w * n_sub * 1.1
     offsets = np.linspace(-total_group_width/2 + w/2, total_group_width/2 - w/2, n_sub)
     
     all_raw = df_raw['Val'].tolist()
     max_v = max(all_raw) if all_raw else 1
-    # Log safety
     pos_vals = [x for x in all_raw if x > 0]
     min_pos_v = min(pos_vals) if pos_vals else 0.01
     
@@ -284,11 +281,8 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
     is_log = config['scale'] == "対数 (Log)"
     if is_log: ax.set_yscale('log')
     
-    # --- Draw Data ---
     for i, s_name in enumerate(sub_names):
         col = config['colors'].get(s_name, "#333333")
-        
-        # Gather data
         means, errs, raw_vals_list = [], [], []
         x_coords = x_base + offsets[i]
         
@@ -296,8 +290,6 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
             v = grouped_data[m_group].get(s_name, [])
             if is_log: v, _ = clean_data_for_log(v)
             else: v = v if isinstance(v, list) else []
-            
-            # Map coords
             name_to_x_map[(m_group, s_name)] = x_coords[j]
             
             if len(v) > 0:
@@ -310,30 +302,24 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
                 means.append(0); errs.append(0)
             raw_vals_list.append(v)
             
-            # Base Y
             top = max(v) if len(v)>0 else 0
-            if "棒" in config['manual_type']: 
-                top = (means[-1] + errs[-1]) if len(v)>0 else 0
+            if "棒" in config['manual_type']: top = (means[-1] + errs[-1]) if len(v)>0 else 0
             margin = 1.2 if is_log else 1.05
             base_y_map[(m_group, s_name)] = top * margin
 
-        # Bar
         if "棒" in config['manual_type']: 
             ax.bar(x_coords, means, width=w, label=s_name, color=col, edgecolor='black', alpha=0.8, yerr=errs, capsize=4, zorder=1)
         else:
-            # Boxplot
             for k, v in enumerate(raw_vals_list):
                 if len(v) > 0:
                     ax.boxplot(v, positions=[x_coords[k]], widths=w*0.8, patch_artist=True, 
                                boxprops=dict(facecolor=col, alpha=0.8), medianprops=dict(color='black'), showfliers=False)
 
-        # Scatter
         for k, v in enumerate(raw_vals_list):
             if len(v) > 0:
-                noise = np.random.normal(0, config['jitter']*0.05, len(v)) # 2要因は狭いのでJitter控えめ
+                noise = np.random.normal(0, config['jitter']*0.05, len(v))
                 ax.scatter(x_coords[k] + noise, v, s=config['dot_size'], facecolors='white', edgecolors='#555555', zorder=3, alpha=config['dot_alpha'])
 
-    # --- Sig Bars (Cluster Local Tetris) ---
     global_max_y = max_v
     step_y = max_v * 0.1
     
@@ -341,7 +327,6 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
         pairs = sig_res_map.get(m_group, [])
         if not pairs: continue
         
-        # Local Map
         local_name_to_x = {s: name_to_x_map[(m_group, s)] for s in sub_names}
         local_base_y = {s: base_y_map[(m_group, s)] for s in sub_names}
         
@@ -358,7 +343,6 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
     ax.set_xticks(x_base)
     ax.set_xticklabels(list(grouped_data.keys()), fontsize=12)
     
-    # Legend
     if "棒" in config['manual_type']:
         ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
     else:
@@ -379,7 +363,7 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
     return fig
 
 # ---------------------------------------------------------
-# 2. サイドバー設定
+# 2. サイドバー設定 (日本語・権利主張版)
 # ---------------------------------------------------------
 with st.sidebar:
     st.markdown("### 【重要：論文・学会発表での使用】")
@@ -423,21 +407,20 @@ with st.sidebar:
         y_axis_label = st.text_input("Y軸ラベル", value="Relative Value")
         manual_y_max = st.number_input("Y軸最大 (0で自動)", value=0.0, step=1.0)
         st.divider()
-        manual_width = st.slider("画像の幅 (0で自動)", 0.0, 20.0, 0.0, 0.5)
+        manual_width = st.slider("画像の幅 (0で自動)", 0.0, 2000.0, 0.0, 50.0)
         fig_height = st.slider("画像の高さ", 3.0, 15.0, 6.0)
         bar_width = st.slider("棒の太さ", 0.1, 1.0, 0.35, 0.05)
-        # 間隔調整: 2要因ではクラスター間の距離として機能させる
         group_spacing = st.slider("間隔", 0.5, 3.0, 1.0, 0.1) if analysis_mode.startswith("1要因") else 1.0
         
         st.caption("ドット・その他")
-        dot_size = st.slider("ドットサイズ", 0, 100, 20)
+        dot_size = st.slider("ドットサイズ", 0, 20, 6)
         dot_alpha = st.slider("ドット透明度", 0.1, 1.0, 0.7)
         jitter = st.slider("Jitter (散らし)", 0.0, 1.0, 0.2)
 
 # ---------------------------------------------------------
 # 3. メインエリア：データ入力
 # ---------------------------------------------------------
-st.title("🔬 Ultimate Sci-Stat & Graph Engine V13 (Matplotlib)")
+st.title("🔬 Ultimate Sci-Stat & Graph Engine V14 (JP Final)")
 
 plot_config = {
     'mode': graph_mode_ui, 'manual_type': manual_graph_type, 'scale': scale_option,
@@ -534,13 +517,66 @@ with st.sidebar:
 # ---------------------------------------------------------
 if analysis_mode.startswith("1要因"):
     if len(data_dict) >= 2 and check_data_validity(data_dict.values()):
-        # Calc
-        p_val, method, is_norm, reason = auto_select_test(list(data_dict.values()))
+        # Calc & Context
+        p_val, method, is_norm, ctx = auto_select_test(list(data_dict.values()))
         st.success(f"解析完了: {method}")
-        with st.expander("📝 詳細レポート", expanded=True):
-            st.markdown(f"**選定根拠**: {reason} -> **{method}**")
-            st.markdown(f"**P値**: {p_val:.4e} ({'有意差あり' if p_val < 0.05 else '有意差なし'})")
-            st.code(f"Statistical analyses were performed using Python ({method}).")
+        
+        # --- Report Logic (User Specified) ---
+        easy_reason = ""
+        if ctx["all_normal"] and ctx["is_equal_var"]:
+            easy_reason = "データの分布に大きな歪みは検出されず、等分散性も棄却されなかったため、最も標準的で検出力の高い『パラメトリック検定』を選択しました。"
+        elif not ctx["all_normal"]:
+            easy_reason = "データの分布に偏り（非正規性）または外れ値が示唆されたため、順位に基づく『ノンパラメトリック検定』を選択しました。"
+        else:
+            easy_reason = "正規性は棄却されませんでしたが、分散の均一性が棄却されたため、不等分散に対応した手法を選択しました。"
+
+        if ctx["small_n"]:
+            easy_reason += "\n   ※ 一部の群でサンプル数が少ないため、分布の厳密な評価は行っていません。"
+
+        result_summary = "【有意差あり】" if p_val < 0.05 else "【有意差なし】"
+        conclusion_text = "本データセットにおいて群間に統計学的な有意差が認められ、少なくとも一部の群間で平均値（または代表値）に差が存在することが示唆されました。" if p_val < 0.05 else "本データセットにおいて群間に統計学的な有意差は認められず、各群の平均値に明確な差は見出せませんでした。"
+
+        norm_res_text = "大きな歪みは検出されず (Not Rejected)" if ctx["all_normal"] else "非正規性を示唆 (Rejected)"
+        if ctx["small_n"]: norm_res_text += " ※n<3のため参考値"
+        var_res_text = "等分散性は棄却されず (Not Rejected)" if ctx["is_equal_var"] else "等分散性は棄却された (Rejected)"
+
+        analysis_path = f"""
+【統計手法の選定プロセス (Automatic Diagnosis)】
+1. 正規性の検定 (Shapiro-Wilk): {norm_res_text}
+2. 等分散性の検定 (Levene): {var_res_text}
+⇒ 上記診断に基づき、**{method}** を採用しました。
+"""
+        
+        with st.expander("📝 そのまま使える報告用レポート (詳細)", expanded=True):
+            full_report = f"""
+【解析報告書：{", ".join(data_dict.keys())} の比較】{analysis_path}
+
+1. 検定の選定根拠：
+   採用手法：{method}
+   選定理由：{easy_reason}
+
+2. 解析の結果：
+   判定：{result_summary}
+   全体のP値：{p_val:.4e}
+   （※有意水準 α=0.05）
+
+3. 多重比較の結果：
+   {"各ペア間の検定を実施し、有意差の有無をグラフに反映しました。" if len(data_dict) > 2 else "2群間の直接比較を実施しました。"}
+
+4. 結論：
+   {conclusion_text}
+            """
+            st.text_area("レポート全文", value=full_report, height=400)
+            
+        with st.expander("📄 論文用 Methods 記述案 (日本語)", expanded=False):
+            methods_text = f"""
+統計解析にはPython環境下のSciPyライブラリ等を用いた。
+データの正規性はShapiro-Wilk検定、等分散性はLevene検定により確認した。
+群間の比較には {method} を用いた。
+（多重比較がある場合はここに{ctx['posthoc']}を追記）
+P値 0.05 未満を統計学的に有意とみなした。
+            """
+            st.text_area("Methods記述案", value=methods_text, height=150)
 
         # Posthoc
         sig_pairs = []
@@ -584,7 +620,6 @@ else: # 2要因
         
         if not df_a.empty:
             st.header("解析結果")
-            # ANOVA
             try:
                 model = ols('Val ~ C(A) * C(B)', data=df_a).fit()
                 res = sm.stats.anova_lm(model, typ=2)
@@ -597,9 +632,8 @@ else: # 2要因
                     st.pyplot(fig_i)
             except: st.warning("ANOVA計算不可")
 
-            # Simple Effects
+            st.subheader("単純主効果の検定 (層別解析)")
             sig_res_map = {}
-            st.subheader("単純主効果 (層別解析)")
             report_text = ""
             
             for m, sub in grouped_data.items():
@@ -629,6 +663,7 @@ else: # 2要因
                                         sig_res_map[m].append({'g1': s_keys[i], 'g2': s_keys[j], 'label': get_sig_label(dunn.iloc[i, j])})
                         else:
                             sig_res_map[m] = run_fallback_posthoc(s_vals, s_keys)
+            
             st.markdown(report_text)
 
             # Draw (Matplotlib)
@@ -641,13 +676,14 @@ else: # 2要因
     else: st.info("データを入力してください")
 
 # ---------------------------------------------------------
-# 6. 免責事項
+# 6. サイドバー最下部：免責事項 (完全日本語・堅牢版)
 # ---------------------------------------------------------
 with st.sidebar:
     st.divider()
-    st.caption("【免責事項】")
+    st.caption("【免責事項 / Disclaimer】")
     st.caption("""
     本ソフトウェアは研究用ツールとして「現状有姿」で提供されます。
     開発者は、本ツールの計算結果の正確性、完全性、特定目的への適合性について一切の保証を行いません。
-    本ツールの使用により生じた、いかなる損害についても、開発者は責任を負いません。
+    本ツールの使用により生じた、いかなる損害（研究データの損失、論文の修正・撤回、機会損失等を含む）についても、開発者は責任を負いません。
+    最終的な統計学的妥当性の判断は、必ず利用者の責任において行ってください。
     """)
