@@ -477,6 +477,11 @@ grouped_data = {}
 if analysis_mode.startswith("1要因"):
     st.caption("1つの条件で複数の群を比較します")
     t1, t2 = st.tabs(["✍️ 手動入力", "📂 CSVアップロード"])
+    
+    # セッションステート初期化
+    if 'csv_data_cache_jp' not in st.session_state:
+        st.session_state.csv_data_cache_jp = {}
+
     with t1:
         if 'g_cnt' not in st.session_state: st.session_state.g_cnt = 3
         c1, c2 = st.columns([1,5])
@@ -498,18 +503,33 @@ if analysis_mode.startswith("1要因"):
                 if st.radio("形式", ["縦持ち", "横持ち (一括)"]).startswith("縦"):
                     cols = df.columns.tolist()
                     c_grp = st.selectbox("G列", cols); c_val = st.selectbox("V列", [c for c in cols if c!=c_grp])
+                    
                     if st.button("読込"):
+                        temp = {}
                         for g in df[c_grp].unique():
                             v = df[df[c_grp]==g][c_val].dropna().tolist()
                             clean = [float(x) for x in v if str(x).replace('.','').isdigit()]
-                            if clean: data_dict[g] = clean
+                            if clean: temp[g] = clean
+                        st.session_state.csv_data_cache_jp = temp
                 else:
                     num_cols = df.select_dtypes(include=[np.number]).columns
                     sel = st.multiselect("列選択", num_cols, default=list(num_cols)[:3])
+                    
                     if st.button("読込"):
+                        temp = {}
                         for c in sel:
                             v = df[c].dropna().tolist(); 
-                            if v: data_dict[c] = v
+                            if v: temp[c] = v
+                        st.session_state.csv_data_cache_jp = temp
+                        
+                # 保存データがあれば読み込む
+                if st.session_state.csv_data_cache_jp:
+                    st.success("CSVデータを読み込みました")
+                    data_dict.update(st.session_state.csv_data_cache_jp)
+                    if st.button("データをクリア"):
+                        st.session_state.csv_data_cache_jp = {}
+                        st.rerun()
+
             except Exception as e: st.error(str(e))
 
 # === 2要因入力 ===
