@@ -167,7 +167,7 @@ def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
     return bars_to_draw
 
 # ---------------------------------------------------------
-# 2. 描画関数 (Matplotlib) - 修正版
+# 2. 描画関数 (Matplotlib) - 間隔と太さを完全分離版
 # ---------------------------------------------------------
 
 def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
@@ -175,13 +175,17 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
     group_names = list(data_dict.keys())
     all_values = list(data_dict.values())
     
-    # 図の幅を計算
-    fig_w = config['width'] if config['width'] > 0 else max(6.0, len(data_dict) * 1.5 * config['spacing'])
-    fig, ax = plt.subplots(figsize=(fig_w, config['height']))
-    
-    # X座標を計算 (spacingに基づく)
-    x_pos = np.arange(len(group_names)) * config['spacing']
+    # 【修正1】X座標は 0, 1, 2... で固定（spacingを掛けない）
+    # これにより、棒の太さ（データ単位）と座標の関係が固定されます。
+    x_pos = np.arange(len(group_names))
     name_to_x = {name: x for name, x in zip(group_names, x_pos)}
+    
+    # 【修正2】「間隔(spacing)」スライダーを「画像の横幅」の倍率として使う
+    # spacing=1.0 が標準。2.0にすると横幅が2倍になり、見た目上の隙間が広がる。
+    base_width_per_group = 2.0 
+    fig_w = max(6.0, len(data_dict) * base_width_per_group * config['spacing'])
+    
+    fig, ax = plt.subplots(figsize=(fig_w, config['height']))
     
     all_flat = [x for sub in all_values for x in sub]
     max_v = max(all_flat) if all_flat else 1
@@ -213,7 +217,7 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
         margin_ratio = 1.05 if config['scale'].startswith("線形") else 1.2
         base_y_map[name] = top_val * margin_ratio
         
-        # グラフ描画
+        # 描画 (bar_widthはそのまま使用)
         if "棒" in final_type:
             ax.bar(p, mean, width=config['bar_width'], color=col, edgecolor='black', alpha=0.8, zorder=1)
             if config['error'] != "None":
@@ -225,15 +229,13 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
             parts = ax.violinplot(vals_plot, positions=[p], widths=config['bar_width'], showextrema=False)
             for pc in parts['bodies']: pc.set_facecolor(col); pc.set_alpha(0.8); pc.set_zorder(1)
             
-        # Jitter (散らし) の修正：一様分布を使い、棒の幅の中に収める
+        # Jitter (棒の幅からはみ出ないように制限)
         if len(vals_plot) > 0:
-            # 幅の半分より少し内側までに制限 (0.4倍程度)
             jitter_width = config['bar_width'] * 0.4 * config['jitter'] 
-            # -1 から 1 の乱数 * 幅制限
             noise = np.random.uniform(-1, 1, len(vals_plot)) * jitter_width
             ax.scatter(p + noise, vals_plot, s=config['dot_size'], facecolors='white', edgecolors='#555555', zorder=3, alpha=config['dot_alpha'])
 
-    # Sig Bars (有意差バー)
+    # Sig Bars
     step_y = max_v * 0.1
     is_log = config['scale'] == "対数 (Log)"
     if is_log: ax.set_yscale('log')
@@ -254,9 +256,8 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     
-    # 【重要】X軸の範囲を明示的に固定してズレを防ぐ
-    padding = config['spacing'] * 0.6
-    ax.set_xlim(min(x_pos) - padding, max(x_pos) + padding)
+    # X軸の範囲固定 (余白は固定値)
+    ax.set_xlim(-0.8, len(group_names) - 0.2)
     
     if config['manual_y_max'] > 0:
         ax.set_ylim(bottom=None, top=config['manual_y_max'])
@@ -267,6 +268,122 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
              ax.set_ylim(bottom=0, top=global_max_y * top_margin)
         else:
              ax.set_ylim(bottom=bottom_val, top=global_max_y * top_margin)
+
+    return fig
+
+def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names):
+    plt.rcParams['font.family'] = 'sans-serif'
+    n_major = len(grouped_data)
+    n_sub = len(sub_names)
+    
+    # 【修正2】間隔スライダーで全体の幅を調整
+    base_width_per_group = max(2.5, n_sub * 1.2)
+    fig_w = max(6.0, n_major * base_width_per_group * config['spacing'])
+    
+    fig, ax = plt.subplots(figsize=(fig_w, config['height']))
+    
+    # 【修正1】X座標は固定
+    x_base = np.arange(n_major)
+    w = config['bar_width']
+    
+    # サブグループのオフセット計算
+    # バーの太さに応じて詰める。spacingは関係させない。
+    total_group_width = w * n_sub * 1.1 
+    offsets = np.linspace(-total_group_width/2 + w/2, total_group_width/2 - w/2, n_sub)
+    
+    all_raw = df_raw['Val'].tolist()
+    max_v = max(all_raw) if all_raw else 1
+    pos_vals = [x for x in all_raw if x > 0]
+    min_pos_v = min(pos_vals) if pos_vals else 0.01
+    
+    name_to_x_map = {}
+    base_y_map = {} 
+    is_log = config['scale'] == "対数 (Log)"
+    if is_log: ax.set_yscale('log')
+    
+    for i, s_name in enumerate(sub_names):
+        col = config['colors'].get(s_name, "#333333")
+        means, errs, raw_vals_list = [], [], []
+        x_coords = x_base + offsets[i]
+        
+        for j, m_group in enumerate(grouped_data.keys()):
+            v = grouped_data[m_group].get(s_name, [])
+            if is_log: v, _ = clean_data_for_log(v)
+            else: v = v if isinstance(v, list) else []
+            name_to_x_map[(m_group, s_name)] = x_coords[j]
+            
+            if len(v) > 0:
+                mean = np.mean(v)
+                std = np.std(v, ddof=1) if len(v)>1 else 0
+                sem = std/np.sqrt(len(v)) if len(v)>0 else 0
+                err = sem if config['error'].startswith("SEM") else std
+                means.append(mean); errs.append(err)
+            else:
+                means.append(0); errs.append(0)
+            raw_vals_list.append(v)
+            
+            top = max(v) if len(v)>0 else 0
+            if "棒" in config['manual_type']: top = (means[-1] + errs[-1]) if len(v)>0 else 0
+            margin = 1.2 if is_log else 1.05
+            base_y_map[(m_group, s_name)] = top * margin
+
+        if "棒" in config['manual_type']: 
+            ax.bar(x_coords, means, width=w, label=s_name, color=col, edgecolor='black', alpha=0.8, yerr=errs, capsize=4, zorder=1)
+        else:
+            for k, v in enumerate(raw_vals_list):
+                if len(v) > 0:
+                    ax.boxplot(v, positions=[x_coords[k]], widths=w*0.8, patch_artist=True, 
+                               boxprops=dict(facecolor=col, alpha=0.8), medianprops=dict(color='black'), showfliers=False, zorder=1)
+
+        for k, v in enumerate(raw_vals_list):
+            if len(v) > 0:
+                # Jitter修正
+                jitter_width = w * 0.4 * config['jitter']
+                noise = np.random.uniform(-1, 1, len(v)) * jitter_width
+                ax.scatter(x_coords[k] + noise, v, s=config['dot_size'], facecolors='white', edgecolors='#555555', zorder=3, alpha=config['dot_alpha'])
+
+    global_max_y = max_v
+    step_y = max_v * 0.1
+    
+    for m_group in grouped_data.keys():
+        pairs = sig_res_map.get(m_group, [])
+        if not pairs: continue
+        
+        local_name_to_x = {s: name_to_x_map[(m_group, s)] for s in sub_names}
+        local_base_y = {s: base_y_map[(m_group, s)] for s in sub_names}
+        
+        bars = calculate_sig_bars_layout(pairs, local_name_to_x, local_base_y, step_y, is_log)
+        
+        for b in bars:
+            x1, x2, y, label = b['x1'], b['x2'], b['y'], b['label']
+            ax.plot([x1, x1, x2, x2], [y*0.98, y, y, y*0.98], lw=1.5, c='black')
+            ax.text((x1+x2)/2, y, label, ha='center', va='bottom', fontsize=12)
+            if y > global_max_y: global_max_y = y
+
+    ax.set_ylabel(config['ylabel'], fontsize=12)
+    ax.set_title(config['title'], fontsize=14)
+    ax.set_xticks(x_base)
+    ax.set_xticklabels(list(grouped_data.keys()), fontsize=12)
+    
+    if "棒" in config['manual_type']:
+        ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left')
+    else:
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor=config['colors'].get(n,'#333'), edgecolor='black', label=n) for n in sub_names]
+        ax.legend(handles=legend_elements, bbox_to_anchor=(1.02, 1), loc='upper left')
+
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    # X軸範囲固定
+    ax.set_xlim(-0.8, n_major - 0.2)
+    
+    if config['manual_y_max'] > 0:
+        ax.set_ylim(bottom=None, top=config['manual_y_max'])
+    else:
+        top_margin = 1.1 if not is_log else 1.5
+        bottom_val = 0 if not is_log else min_pos_v * 0.5
+        ax.set_ylim(bottom=bottom_val, top=global_max_y * top_margin)
 
     return fig
 
