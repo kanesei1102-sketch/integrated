@@ -441,7 +441,6 @@ with st.sidebar:
         y_axis_label = st.text_input("Y軸ラベル", value="Relative Value")
         manual_y_max = st.number_input("Y軸最大 (0で自動)", value=0.0, step=1.0)
         st.divider()
-        manual_width = st.slider("画像の幅 (0で自動)", 0.0, 2000.0, 0.0, 50.0)
         fig_height = st.slider("画像の高さ", 3.0, 15.0, 6.0)
         bar_width = st.slider("棒の太さ", 0.1, 1.0, 0.35, 0.05)
         # --- 変更点: 間隔設定を「最大(1.0)から狭める」方式に変更 ---
@@ -467,7 +466,7 @@ st.title("🔬 Ultimate Sci-Stat & Graph Engine V14 (JP Final)")
 plot_config = {
     'mode': graph_mode_ui, 'manual_type': manual_graph_type, 'scale': scale_option,
     'error': error_type, 'auto_zoom': auto_zoom, 'title': fig_title, 'ylabel': y_axis_label,
-    'width': manual_width, 'height': fig_height, 'bar_width': bar_width, 'spacing': group_spacing,
+    'width': 0, 'height': fig_height, 'bar_width': bar_width, 'spacing': group_spacing,
     'dot_size': dot_size, 'dot_alpha': dot_alpha, 'jitter': jitter, 'colors': {}, 'manual_y_max': manual_y_max
 }
 
