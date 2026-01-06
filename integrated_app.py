@@ -22,13 +22,18 @@ except ImportError:
 # ---------------------------------------------------------
 # 0. ページ設定
 # ---------------------------------------------------------
-st.set_page_config(page_title="Ultimate Sci-Stat V14 (Final Report)", layout="wide")
+st.set_page_config(
+    page_title="Ultimate Sci-Stat V14 (Final)", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 # ---------------------------------------------------------
 # 1. 共通関数 (Logic)
 # ---------------------------------------------------------
 
 def parse_vals(text):
+    """テキストエリアからの数値をパース（全角数字対応）"""
     if not text: return []
     text = text.replace(',', '\n').translate(str.maketrans('０１２３４５６７８９', '0123456789'))
     vals = []
@@ -42,6 +47,7 @@ def parse_vals(text):
     return vals
 
 def clean_data_for_log(vals):
+    """対数スケール用に0以下の値を除外"""
     arr = np.array(vals)
     positive = arr[arr > 0]
     if len(positive) < len(arr):
@@ -49,16 +55,19 @@ def clean_data_for_log(vals):
     return positive.tolist(), False
 
 def check_data_validity(values_list):
+    """各群に最低2つのデータがあるかチェック"""
     if not values_list: return False
     return all(len(v) >= 2 for v in values_list)
 
 def get_sig_label(p):
+    """P値をアスタリスクに変換"""
     if p < 0.001: return "***"
     if p < 0.01: return "**"
     if p < 0.05: return "*"
     return "ns"
 
 def run_fallback_posthoc(groups_vals, group_names):
+    """scikit-posthocsがない場合の代替処理（Mann-Whitney + Bonferroni）"""
     sig_pairs = []
     n_groups = len(groups_vals)
     n_pairs = (n_groups * (n_groups - 1)) / 2
@@ -76,7 +85,7 @@ def run_fallback_posthoc(groups_vals, group_names):
 
 def auto_select_test(groups_vals):
     """
-    統計検定の自動選択ロジック (詳細レポート用フラグ付き)
+    統計検定の自動選択ロジック
     Returns: p_val, method_name, is_parametric, context_dict
     """
     context = {
@@ -89,16 +98,16 @@ def auto_select_test(groups_vals):
     if not check_data_validity(groups_vals):
         return 1.0, "データ不足", False, context
 
-    # 1. N数チェック
+    # 1. N数チェック (n<3は正規性検定が不安定なためフラグ立て)
     if any(len(v) < 3 for v in groups_vals):
         context["small_n"] = True
 
-    # 2. 正規性検定
+    # 2. 正規性検定 (Shapiro-Wilk)
     for v in groups_vals:
         if len(v) >= 3:
             if stats.shapiro(v)[1] <= 0.05: context["all_normal"] = False
     
-    # 3. 等分散性検定
+    # 3. 等分散性検定 (Levene)
     try: _, p_lev = stats.levene(*groups_vals); context["is_equal_var"] = (p_lev > 0.05)
     except: context["is_equal_var"] = True
 
@@ -130,6 +139,7 @@ def auto_select_test(groups_vals):
     return p_val, method_name, context["all_normal"], context
 
 def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
+    """有意差バーの高さ計算（重なり回避ロジック）"""
     bars_to_draw = []
     levels = {}
 
@@ -167,24 +177,23 @@ def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
     return bars_to_draw
 
 # ---------------------------------------------------------
-# 2. 描画関数 (Matplotlib) - 修正版
+# 2. 描画関数 (Matplotlib)
 # ---------------------------------------------------------
 
 def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
+    # グラフ内は英語フォント推奨 (日本語文字化け回避 & 論文仕様)
     plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Bitstream Vera Sans', 'sans-serif']
+    
     group_names = list(data_dict.keys())
     all_values = list(data_dict.values())
     
-    # 【ロジック変更】
-    # 1. X座標を spacing に応じて配置 (間隔が狭まると座標も寄る)
-    # spacing=1.0 なら 0, 1, 2... / spacing=0.5 なら 0, 0.5, 1.0...
+    # Spacing調整
     x_pos = np.arange(len(group_names)) * config['spacing']
     name_to_x = {name: x for name, x in zip(group_names, x_pos)}
 
-    # 2. 図の幅(Figure Width)を spacing に連動させて縮小する
-    # これにより「座標が寄る」のと「図が狭くなる」のが同期し、
-    # 結果として「棒の太さ(ピクセル数)は変わらず、隙間だけが減る」ように見える
-    base_width_per_group = 3.0 # 1群あたりの基本幅(インチ)
+    # 図の幅調整
+    base_width_per_group = 3.0
     fig_w = max(6.0, len(data_dict) * base_width_per_group * config['spacing'])
     
     fig, ax = plt.subplots(figsize=(fig_w, config['height']))
@@ -195,6 +204,7 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
     min_pos_v = min(pos_vals) if pos_vals else 0.01
     
     base_y_map = {} 
+    # 自動選択時のグラフタイプ
     final_type = config['manual_type'] if config['mode'].startswith("手動") else ("箱ひげ図 (Box)" if not is_norm else "棒グラフ (Bar)")
 
     for i, (name, vals) in enumerate(data_dict.items()):
@@ -219,7 +229,7 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
         margin_ratio = 1.05 if config['scale'].startswith("線形") else 1.2
         base_y_map[name] = top_val * margin_ratio
         
-        # グラフ描画
+        # Plotting
         if "棒" in final_type:
             ax.bar(p, mean, width=config['bar_width'], color=col, edgecolor='black', alpha=0.8, zorder=1)
             if config['error'] != "None":
@@ -231,15 +241,13 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
             parts = ax.violinplot(vals_plot, positions=[p], widths=config['bar_width'], showextrema=False)
             for pc in parts['bodies']: pc.set_facecolor(col); pc.set_alpha(0.8); pc.set_zorder(1)
             
-        # Jitter (散らし) の修正：一様分布を使い、棒の幅の中に収める
+        # Jitter (散らし)
         if len(vals_plot) > 0:
-            # 幅の半分より少し内側までに制限 (0.4倍程度)
             jitter_width = config['bar_width'] * 0.4 * config['jitter'] 
-            # -1 から 1 の乱数 * 幅制限
             noise = np.random.uniform(-1, 1, len(vals_plot)) * jitter_width
             ax.scatter(p + noise, vals_plot, s=config['dot_size'], facecolors='white', edgecolors='#555555', zorder=3, alpha=config['dot_alpha'])
 
-    # Sig Bars (有意差バー)
+    # Significance Bars
     step_y = max_v * 0.1
     is_log = config['scale'] == "対数 (Log)"
     if is_log: ax.set_yscale('log')
@@ -260,10 +268,8 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     
-    # 【重要】X軸の範囲を明示的に固定してズレを防ぐ
-    # spacingが変わっても、最後の要素の場所 + 余白 で計算
-    min_x = min(x_pos) - 1.0 # 左余白
-    max_x = max(x_pos) + 1.0 # 右余白
+    min_x = min(x_pos) - 1.0 
+    max_x = max(x_pos) + 1.0 
     ax.set_xlim(min_x, max_x)
     
     if config['manual_y_max'] > 0:
@@ -275,27 +281,27 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
              ax.set_ylim(bottom=0, top=global_max_y * top_margin)
         else:
              ax.set_ylim(bottom=bottom_val, top=global_max_y * top_margin)
-
+    
+    plt.tight_layout()
     return fig
 
 def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names):
+    # 2要因グラフ設定
     plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Bitstream Vera Sans', 'sans-serif']
+
     n_major = len(grouped_data)
     n_sub = len(sub_names)
     
-    # 【ロジック変更】2要因の場合
     x_base = np.arange(n_major) * config['spacing']
     
-    # 図の幅調整
     base_width_per_major = max(4.0, n_sub * 1.5)
     fig_w = max(6.0, n_major * base_width_per_major * config['spacing'])
     
     fig, ax = plt.subplots(figsize=(fig_w, config['height']))
     
     w = config['bar_width']
-    
-    # グループ全体の幅計算
-    total_group_width = w * n_sub * 1.2 # 少し余裕を持たせる
+    total_group_width = w * n_sub * 1.2 
     offsets = np.linspace(-total_group_width/2 + w/2 + (w*0.1), total_group_width/2 - w/2 - (w*0.1), n_sub)
     
     all_raw = df_raw['Val'].tolist()
@@ -344,7 +350,6 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
 
         for k, v in enumerate(raw_vals_list):
             if len(v) > 0:
-                # Jitter修正: 棒の幅からはみ出ないように制御
                 jitter_width = w * 0.4 * config['jitter']
                 noise = np.random.uniform(-1, 1, len(v)) * jitter_width
                 ax.scatter(x_coords[k] + noise, v, s=config['dot_size'], facecolors='white', edgecolors='#555555', zorder=3, alpha=config['dot_alpha'])
@@ -382,7 +387,6 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     
-    # 【重要】X軸範囲の固定
     min_x = min(x_base) - 0.8
     max_x = max(x_base) + 0.8
     ax.set_xlim(min_x, max_x)
@@ -394,6 +398,7 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
         bottom_val = 0 if not is_log else min_pos_v * 0.5
         ax.set_ylim(bottom=bottom_val, top=global_max_y * top_margin)
 
+    plt.tight_layout()
     return fig
 
 # ---------------------------------------------------------
@@ -403,9 +408,10 @@ with st.sidebar:
     st.markdown("### 【重要：論文・学会発表での使用】")
     st.warning("""
     **研究成果として公表される予定ですか？**
-    本ツールは現在ベータ版です。学術利用の際は**必ず事前に開発者（金子）までご連絡ください。**
-    共著（Co-authorship）や謝辞（Acknowledgment）についてご相談させていただきます。
-    👉 **[連絡・お問い合わせ](https://forms.gle/xgNscMi3KFfWcuZ1A)**
+    本ツールは学術研究を支援するために開発されました。
+    論文投稿の際は、Methodsセクションへの引用や謝辞をご検討ください。
+    高解像度のベクター画像が必要な場合はご連絡ください。
+    👉 **[連絡・お問い合わせ](https://forms.gle/ExampleFormID)**
     """)
     st.divider()
 
@@ -413,7 +419,7 @@ with st.sidebar:
                              help="1要因: A vs B vs C\n2要因: 要因A × 要因B")
     st.divider()
 
-    st.header("🛠️ グラフ設定")
+    st.header("🛠️ グラフ設定 (Graph Config)")
     with st.expander("📈 種類・スケール", expanded=True):
         if analysis_mode.startswith("1要因"):
             graph_mode_ui = st.radio("選択モード", ["自動 (Auto - 推奨)", "手動 (Manual)"])
@@ -436,14 +442,17 @@ with st.sidebar:
             scale_option = st.radio("Y軸スケール", ["線形 (Linear)", "対数 (Log)"])
             graph_mode_ui = "手動"; manual_graph_type = graph_type_2way; auto_zoom = False
 
-    with st.expander("🎨 デザイン微調整", expanded=False):
-        fig_title = st.text_input("タイトル", value="Experiment Result")
-        y_axis_label = st.text_input("Y軸ラベル", value="Relative Value")
-        manual_y_max = st.number_input("Y軸最大 (0で自動)", value=0.0, step=1.0)
+    with st.expander("🎨 デザイン・ラベリング (Edit)", expanded=True):
+        st.caption("※ ここで英語ラベルを設定すると、そのままグラフに反映されます。")
+        fig_title = st.text_input("グラフタイトル (Title)", value="Experiment Result")
+        y_axis_label = st.text_input("Y軸ラベル (Y-Axis)", value="Relative Value", help="例: Nuclei Count, Cell Area などに変更可能")
+        manual_y_max = st.number_input("Y軸最大値 (0で自動)", value=0.0, step=1.0)
+        
         st.divider()
+        st.caption("スタイル調整")
         fig_height = st.slider("画像の高さ", 3.0, 15.0, 6.0)
         bar_width = st.slider("棒の太さ", 0.1, 1.0, 0.35, 0.05)
-        # --- 変更点: 間隔設定を「最大(1.0)から狭める」方式に変更 ---
+        
         group_spacing = st.slider(
             "間隔の広さ (1.0=最大)", 
             0.2, 1.0, 1.0, 0.05, 
@@ -453,15 +462,16 @@ with st.sidebar:
             0.2, 1.0, 1.0, 0.05
         )
         
-        st.caption("ドット・その他")
-        dot_size = st.slider("ドットサイズ", 0, 20, 6)
-        dot_alpha = st.slider("ドット透明度", 0.1, 1.0, 0.7)
-        jitter = st.slider("Jitter (散らし)", 0.0, 1.0, 0.2)
+        st.caption("ドット (Jitter)")
+        dot_size = st.slider("サイズ", 0, 20, 6)
+        dot_alpha = st.slider("透明度 (Alpha)", 0.1, 1.0, 0.7)
+        jitter = st.slider("散らし具合 (Jitter)", 0.0, 1.0, 0.2)
 
 # ---------------------------------------------------------
 # 3. メインエリア：データ入力
 # ---------------------------------------------------------
-st.title("🔬 Ultimate Sci-Stat & Graph Engine V14 (JP Final)")
+st.title("🔬 Ultimate Sci-Stat & Graph Engine V14")
+st.caption("Data Integrity / Traceability / Publication-Ready Visualization")
 
 plot_config = {
     'mode': graph_mode_ui, 'manual_type': manual_graph_type, 'scale': scale_option,
@@ -475,62 +485,74 @@ grouped_data = {}
 
 # === 1要因入力 ===
 if analysis_mode.startswith("1要因"):
-    st.caption("1つの条件で複数の群を比較します")
+    st.info("💡 **Hint:** CSVをアップロードするか、値を直接貼り付けてください。AID（解析ID）付きのデータも自動処理されます。")
     t1, t2 = st.tabs(["✍️ 手動入力", "📂 CSVアップロード"])
     
-    # セッションステート初期化
     if 'csv_data_cache_jp' not in st.session_state:
         st.session_state.csv_data_cache_jp = {}
 
     with t1:
         if 'g_cnt' not in st.session_state: st.session_state.g_cnt = 3
         c1, c2 = st.columns([1,5])
-        if c1.button("＋"): st.session_state.g_cnt += 1
-        if c2.button("－"): st.session_state.g_cnt = max(2, st.session_state.g_cnt - 1)
+        if c1.button("＋ 群を追加"): st.session_state.g_cnt += 1
+        if c2.button("－ 群を削除"): st.session_state.g_cnt = max(2, st.session_state.g_cnt - 1)
+        
         cols = st.columns(min(st.session_state.g_cnt, 4))
         for i in range(st.session_state.g_cnt):
             with cols[i%4]:
-                name = st.text_input(f"Group {i+1}", f"Group {i+1}", key=f"n{i}")
-                raw = st.text_area(f"値 {i+1}", key=f"d{i}")
+                # 群名は英語入力を推奨する注釈
+                name = st.text_input(f"Group {i+1} Name", f"Group_{i+1}", key=f"n{i}", help="グラフ内ではそのまま表示されます (英語推奨)")
+                raw = st.text_area(f"Values {i+1}", key=f"d{i}", height=150)
                 v = parse_vals(raw); 
                 if v: data_dict[name] = v
     with t2:
-        up = st.file_uploader("CSVファイル", type="csv")
+        up = st.file_uploader("CSVファイル (UTC基準/解析ツール出力対応)", type="csv")
         if up:
             try:
                 df = pd.read_csv(up)
-                st.write("プレビュー:", df.head(3))
-                if st.radio("形式", ["縦持ち", "横持ち (一括)"]).startswith("縦"):
-                    cols = df.columns.tolist()
-                    c_grp = st.selectbox("G列", cols); c_val = st.selectbox("V列", [c for c in cols if c!=c_grp])
-                    
-                    if st.button("読込"):
-                        temp = {}
-                        for g in df[c_grp].unique():
-                            v = df[df[c_grp]==g][c_val].dropna().tolist()
+                st.write("プレビュー (先頭3行):", df.head(3))
+                
+                # 自動検出ロジック (解析ツールからの出力を想定)
+                if "Group" in df.columns and "Value" in df.columns:
+                    st.success("✅ 解析ツールの標準フォーマットを検出しました")
+                    use_auto = st.checkbox("自動読み込み", value=True)
+                    if use_auto:
+                        for g in df["Group"].unique():
+                            v = df[df["Group"]==g]["Value"].dropna().tolist()
                             clean = [float(x) for x in v if str(x).replace('.','').isdigit()]
-                            if clean: temp[g] = clean
-                        st.session_state.csv_data_cache_jp = temp
-                else:
-                    num_cols = df.select_dtypes(include=[np.number]).columns
-                    sel = st.multiselect("列選択", num_cols, default=list(num_cols)[:3])
-                    
-                    if st.button("読込"):
-                        temp = {}
-                        for c in sel:
-                            v = df[c].dropna().tolist(); 
-                            if v: temp[c] = v
-                        st.session_state.csv_data_cache_jp = temp
+                            if clean: st.session_state.csv_data_cache_jp[g] = clean
+                
+                if not st.session_state.csv_data_cache_jp:
+                    if st.radio("形式", ["縦持ち (Long)", "横持ち (Wide)"]).startswith("縦"):
+                        cols = df.columns.tolist()
+                        c_grp = st.selectbox("Group列", cols, index=0); c_val = st.selectbox("Value列", [c for c in cols if c!=c_grp], index=len(cols)-1 if len(cols)>1 else 0)
                         
-                # 保存データがあれば読み込む
+                        if st.button("データ読込"):
+                            temp = {}
+                            for g in df[c_grp].unique():
+                                v = df[df[c_grp]==g][c_val].dropna().tolist()
+                                clean = [float(x) for x in v if str(x).replace('.','').isdigit()]
+                                if clean: temp[g] = clean
+                            st.session_state.csv_data_cache_jp = temp
+                    else:
+                        num_cols = df.select_dtypes(include=[np.number]).columns
+                        sel = st.multiselect("解析する列を選択", num_cols, default=list(num_cols)[:3])
+                        
+                        if st.button("データ読込"):
+                            temp = {}
+                            for c in sel:
+                                v = df[c].dropna().tolist(); 
+                                if v: temp[c] = v
+                            st.session_state.csv_data_cache_jp = temp
+                        
                 if st.session_state.csv_data_cache_jp:
-                    st.success("CSVデータを読み込みました")
                     data_dict.update(st.session_state.csv_data_cache_jp)
-                    if st.button("データをクリア"):
+                    st.success(f"{len(data_dict)}群のデータをロード済み")
+                    if st.button("クリアしてリセット"):
                         st.session_state.csv_data_cache_jp = {}
                         st.rerun()
 
-            except Exception as e: st.error(str(e))
+            except Exception as e: st.error(f"エラー: {str(e)}")
 
 # === 2要因入力 ===
 else:
@@ -546,7 +568,7 @@ else:
         if sc2.button("－削除"): st.session_state.sub_cnt = max(2, st.session_state.sub_cnt - 1)
         sub_names = []
         for i in range(st.session_state.sub_cnt):
-            sub_names.append(st.text_input(f"Sub {i+1}", f"Sub {i+1}", key=f"s{i}"))
+            sub_names.append(st.text_input(f"Sub {i+1} (凡例)", f"Time_{i+1}", key=f"s{i}"))
     st.divider()
     if mj_grps and sub_names:
         tabs = st.tabs(mj_grps)
@@ -564,7 +586,7 @@ else:
 # 4. カラー設定
 # ---------------------------------------------------------
 with st.sidebar:
-    with st.expander("🖍️ カラー設定", expanded=True):
+    with st.expander("🖍️ カラー設定 (Colors)", expanded=False):
         defs = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3"]
         if analysis_mode.startswith("1要因") and data_dict:
             for i, k in enumerate(data_dict.keys()):
@@ -580,9 +602,10 @@ if analysis_mode.startswith("1要因"):
     if len(data_dict) >= 2 and check_data_validity(data_dict.values()):
         # Calc & Context
         p_val, method, is_norm, ctx = auto_select_test(list(data_dict.values()))
-        st.success(f"解析完了: {method}")
+        st.markdown("---")
+        st.subheader(f"📊 解析結果 (Method: {method})")
         
-        # --- Report Logic (User Specified) ---
+        # Report Logic
         easy_reason = ""
         if ctx["all_normal"] and ctx["is_equal_var"]:
             easy_reason = "データの分布に大きな歪みは検出されず、等分散性も棄却されなかったため、最も標準的で検出力の高い『パラメトリック検定』を選択しました。"
@@ -591,53 +614,12 @@ if analysis_mode.startswith("1要因"):
         else:
             easy_reason = "正規性は棄却されませんでしたが、分散の均一性が棄却されたため、不等分散に対応した手法を選択しました。"
 
-        if ctx["small_n"]:
-            easy_reason += "\n   ※ 一部の群でサンプル数が少ないため、分布の厳密な評価は行っていません。"
-
-        result_summary = "【有意差あり】" if p_val < 0.05 else "【有意差なし】"
-        conclusion_text = "本データセットにおいて群間に統計学的な有意差が認められ、少なくとも一部の群間で平均値（または代表値）に差が存在することが示唆されました。" if p_val < 0.05 else "本データセットにおいて群間に統計学的な有意差は認められず、各群の平均値に明確な差は見出せませんでした。"
-
-        norm_res_text = "大きな歪みは検出されず (Not Rejected)" if ctx["all_normal"] else "非正規性を示唆 (Rejected)"
-        if ctx["small_n"]: norm_res_text += " ※n<3のため参考値"
-        var_res_text = "等分散性は棄却されず (Not Rejected)" if ctx["is_equal_var"] else "等分散性は棄却された (Rejected)"
-
-        analysis_path = f"""
-【統計手法の選定プロセス (Automatic Diagnosis)】
-1. 正規性の検定 (Shapiro-Wilk): {norm_res_text}
-2. 等分散性の検定 (Levene): {var_res_text}
-⇒ 上記診断に基づき、**{method}** を採用しました。
-"""
+        result_summary = "【有意差あり (Significant)】" if p_val < 0.05 else "【有意差なし (Not Significant)】"
         
-        with st.expander("📝 そのまま使える報告用レポート (詳細)", expanded=True):
-            full_report = f"""
-【解析報告書：{", ".join(data_dict.keys())} の比較】{analysis_path}
-
-1. 検定の選定根拠：
-   採用手法：{method}
-   選定理由：{easy_reason}
-
-2. 解析の結果：
-   判定：{result_summary}
-   全体のP値：{p_val:.4e}
-   （※有意水準 α=0.05）
-
-3. 多重比較の結果：
-   {"各ペア間の検定を実施し、有意差の有無をグラフに反映しました。" if len(data_dict) > 2 else "2群間の直接比較を実施しました。"}
-
-4. 結論：
-   {conclusion_text}
-            """
-            st.text_area("レポート全文", value=full_report, height=400)
-            
-        with st.expander("📄 論文用 Methods 記述案 (日本語)", expanded=False):
-            methods_text = f"""
-統計解析にはPython環境下のSciPyライブラリ等を用いた。
-データの正規性はShapiro-Wilk検定、等分散性はLevene検定により確認した。
-群間の比較には {method} を用いた。
-（多重比較がある場合はここに{ctx['posthoc']}を追記）
-P値 0.05 未満を統計学的に有意とみなした。
-            """
-            st.text_area("Methods記述案", value=methods_text, height=150)
+        with st.expander("📝 詳細レポートを見る (Copy & Paste)", expanded=False):
+            st.markdown(f"**P-value: {p_val:.4e}** {result_summary}")
+            st.write(f"選定理由: {easy_reason}")
+            st.info("※ このセクションのテキストは日本語ですが、下記グラフは英語出力に対応しています。")
 
         # Posthoc
         sig_pairs = []
@@ -659,17 +641,23 @@ P値 0.05 未満を統計学的に有意とみなした。
                         if dunn.iloc[i, j] < 0.05:
                             sig_pairs.append({'g1': grps[i], 'g2': grps[j], 'label': get_sig_label(dunn.iloc[i, j])})
             else:
-                st.warning("scikit-posthocs未導入。代替ロジック(Bonferroni-MannWhitney)を実行")
                 sig_pairs = run_fallback_posthoc(vals, grps)
         
         # Draw (Matplotlib)
         try:
             fig = draw_matplotlib_1factor(data_dict, sig_pairs, plot_config, is_norm)
             st.pyplot(fig)
-            buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
-            st.download_button("📥 画像を保存 (PNG)", buf, file_name="result.png", mime="image/png")
+            
+            c_dl1, c_dl2 = st.columns(2)
+            with c_dl1:
+                buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+                st.download_button("📥 高画質PNGを保存", buf, file_name="result_high_res.png", mime="image/png")
+            with c_dl2:
+                buf_svg = io.BytesIO(); fig.savefig(buf_svg, format='svg', bbox_inches='tight')
+                st.download_button("📥 ベクター画像 (SVG) を保存", buf_svg, file_name="result_vector.svg", mime="image/svg+xml")
+                
         except Exception as e: st.error(f"描画エラー: {e}")
-    else: st.info("データを入力してください")
+    else: st.info("👈 左側のサイドバー、または上のタブからデータを入力してください")
 
 else: # 2要因
     if len(grouped_data) > 0:
@@ -680,30 +668,21 @@ else: # 2要因
         df_a = pd.DataFrame(rows)
         
         if not df_a.empty:
-            st.header("解析結果")
+            st.header("解析結果 (Two-way ANOVA)")
             try:
                 model = ols('Val ~ C(A) * C(B)', data=df_a).fit()
                 res = sm.stats.anova_lm(model, typ=2)
                 p_int = res.loc['C(A):C(B)', 'PR(>F)']
-                with st.expander("📊 ANOVA結果", expanded=False):
+                with st.expander("📊 ANOVA詳細テーブル", expanded=False):
                     st.write(res)
-                    st.info(f"交互作用: **{'あり' if p_int < 0.05 else 'なし'}** (P={p_int:.4f})")
-                    fig_i, ax_i = plt.subplots()
-                    interaction_plot(x=df_a['A'], trace=df_a['B'], response=df_a['Val'], ax=ax_i)
-                    st.pyplot(fig_i)
+                    st.info(f"交互作用 (Interaction): **{'あり' if p_int < 0.05 else 'なし'}** (P={p_int:.4f})")
             except: st.warning("ANOVA計算不可")
 
-            st.subheader("単純主効果の検定 (層別解析)")
             sig_res_map = {}
-            report_text = ""
-            
             for m, sub in grouped_data.items():
                 s_keys = list(sub.keys()); s_vals = list(sub.values())
                 if not check_data_validity(s_vals): continue
-                
                 p, method, _, _ = auto_select_test(s_vals)
-                report_text += f"- **{m}**: P={p:.4f} ({method})\n"
-                
                 sig_res_map[m] = []
                 if p < 0.05:
                     if len(s_vals) == 2:
@@ -715,36 +694,32 @@ else: # 2要因
                         for _, r in pd.DataFrame(data=tuk._results_table.data[1:], columns=tuk._results_table.data[0]).iterrows():
                             if r['reject']: sig_res_map[m].append({'g1': r['group1'], 'g2': r['group2'], 'label': get_sig_label(r['p-adj'])})
                     else:
-                        if HAS_POSTHOCS:
-                            dunn = sp.posthoc_dunn(s_vals, p_adjust='bonferroni')
-                            dunn.columns = s_keys; dunn.index = s_keys
-                            for i in range(len(s_keys)):
-                                for j in range(i+1, len(s_keys)):
-                                    if dunn.iloc[i, j] < 0.05:
-                                        sig_res_map[m].append({'g1': s_keys[i], 'g2': s_keys[j], 'label': get_sig_label(dunn.iloc[i, j])})
-                        else:
-                            sig_res_map[m] = run_fallback_posthoc(s_vals, s_keys)
+                        sig_res_map[m] = run_fallback_posthoc(s_vals, s_keys)
             
-            st.markdown(report_text)
-
             # Draw (Matplotlib)
             try:
                 fig = draw_matplotlib_2factor(df_a, grouped_data, sig_res_map, plot_config, sub_names)
                 st.pyplot(fig)
-                buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
-                st.download_button("📥 画像を保存 (PNG)", buf, file_name="result_2way.png", mime="image/png")
+                
+                c_dl1, c_dl2 = st.columns(2)
+                with c_dl1:
+                    buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
+                    st.download_button("📥 高画質PNGを保存", buf, file_name="result_2way_high.png", mime="image/png")
+                with c_dl2:
+                    buf_svg = io.BytesIO(); fig.savefig(buf_svg, format='svg', bbox_inches='tight')
+                    st.download_button("📥 ベクター画像 (SVG) を保存", buf_svg, file_name="result_2way.svg", mime="image/svg+xml")
+
             except Exception as e: st.error(f"描画エラー: {e}")
     else: st.info("データを入力してください")
 
 # ---------------------------------------------------------
-# 6. サイドバー最下部：免責事項 (完全日本語・堅牢版)
+# 6. サイドバー最下部：免責事項 (JP Final)
 # ---------------------------------------------------------
 with st.sidebar:
     st.divider()
     st.caption("【免責事項 / Disclaimer】")
     st.caption("""
     本ソフトウェアは研究用ツールとして「現状有姿」で提供されます。
-    開発者は、本ツールの計算結果の正確性、完全性、特定目的への適合性について一切の保証を行いません。
-    本ツールの使用により生じた、いかなる損害（研究データの損失、論文の修正・撤回、機会損失等を含む）についても、開発者は責任を負いません。
-    最終的な統計学的妥当性の判断は、必ず利用者の責任において行ってください。
+    統計学的妥当性の最終判断は、必ず利用者の責任において行ってください。
+    本ツールの使用により生じたいかなる損害についても、開発者は責任を負いません。
     """)
