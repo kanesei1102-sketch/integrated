@@ -23,7 +23,7 @@ except ImportError:
 # 0. ページ設定
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="Ultimate Sci-Stat V14 (Final)", 
+    page_title="Ultimate Sci-Stat V14 (QuantData Edition)", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -181,7 +181,7 @@ def calculate_sig_bars_layout(pairs, name_to_x, base_y_map, step_y, is_log):
 # ---------------------------------------------------------
 
 def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
-    # グラフ内は英語フォント推奨 (日本語文字化け回避 & 論文仕様)
+    # グラフ内は英語フォント推奨
     plt.rcParams['font.family'] = 'sans-serif'
     plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Bitstream Vera Sans', 'sans-serif']
     
@@ -485,7 +485,7 @@ grouped_data = {}
 
 # === 1要因入力 ===
 if analysis_mode.startswith("1要因"):
-    st.info("💡 **Hint:** CSVをアップロードするか、値を直接貼り付けてください。AID（解析ID）付きのデータも自動処理されます。")
+    st.info("💡 **Hint:** CSVをアップロードするか、値を直接貼り付けてください。QuantData形式も自動認識します。")
     t1, t2 = st.tabs(["✍️ 手動入力", "📂 CSVアップロード"])
     
     if 'csv_data_cache_jp' not in st.session_state:
@@ -506,15 +506,61 @@ if analysis_mode.startswith("1要因"):
                 v = parse_vals(raw); 
                 if v: data_dict[name] = v
     with t2:
-        up = st.file_uploader("CSVファイル (UTC基準/解析ツール出力対応)", type="csv")
+        up = st.file_uploader("CSVファイル (QuantData/解析ツール出力対応)", type="csv")
         if up:
             try:
                 df = pd.read_csv(up)
                 st.write("プレビュー (先頭3行):", df.head(3))
                 
-                # 自動検出ロジック (解析ツールからの出力を想定)
-                if "Group" in df.columns and "Value" in df.columns:
-                    st.success("✅ 解析ツールの標準フォーマットを検出しました")
+                # --- QuantData Specific Logic (Added) ---
+                if 'Main_Value' in df.columns and 'Group' in df.columns:
+                    st.success("✅ QuantData形式を検出しました (Detection: Specific Format)")
+                    st.info("このCSVの 'Group' 列は測定項目（Area, Countなど）を表しているようです。解析対象を選んでください。")
+
+                    # Step 1: Metric Selection (Filter by 'Group' column in CSV)
+                    metric_options = df['Group'].unique()
+                    selected_metric = st.selectbox("1. 解析する測定項目を選択 (Select Metric)", metric_options)
+                    
+                    # Filter Data
+                    df_sub = df[df['Group'] == selected_metric].copy()
+                    
+                    # Step 2: Experimental Grouping Selection
+                    st.markdown("---")
+                    st.write(f"選択中: **{selected_metric}** (データ数: {len(df_sub)})")
+                    
+                    # Exclude non-grouping columns to make selection easier
+                    exclude_cols = ['Main_Value', 'Group', 'Timestamp_UTC', 'Unit', 'Analysis_ID']
+                    group_col_candidates = [c for c in df.columns if c not in exclude_cols]
+                    
+                    # Default to 'File_Name' if available, otherwise first candidate
+                    default_idx = 0
+                    if 'File_Name' in group_col_candidates:
+                        default_idx = group_col_candidates.index('File_Name')
+                    
+                    group_col = st.selectbox(
+                        "2. 実験群（比較対象）の列を選択 (Select Group Column)", 
+                        group_col_candidates, 
+                        index=default_idx,
+                        help="例: Control vs Treated を区別できる列（File_Nameなど）を選んでください"
+                    )
+
+                    if st.button("データをロード (Load Data)"):
+                        temp = {}
+                        # Grouping logic
+                        unique_groups = df_sub[group_col].unique()
+                        for g in unique_groups:
+                            raw_v = df_sub[df_sub[group_col] == g]['Main_Value'].tolist()
+                            # Clean values
+                            clean = [float(x) for x in raw_v if str(x).replace('.','').replace('-','').isdigit()]
+                            if clean: temp[str(g)] = clean
+                        
+                        st.session_state.csv_data_cache_jp = temp
+                        st.success(f"{len(temp)}群のデータを抽出しました。")
+                        st.rerun()
+
+                # --- Standard Format Logic (Existing) ---
+                elif "Group" in df.columns and "Value" in df.columns:
+                    st.success("✅ 標準フォーマットを検出しました (Detection: Standard)")
                     use_auto = st.checkbox("自動読み込み", value=True)
                     if use_auto:
                         for g in df["Group"].unique():
@@ -522,7 +568,10 @@ if analysis_mode.startswith("1要因"):
                             clean = [float(x) for x in v if str(x).replace('.','').isdigit()]
                             if clean: st.session_state.csv_data_cache_jp[g] = clean
                 
+                # --- Generic CSV Logic ---
                 if not st.session_state.csv_data_cache_jp:
+                    st.divider()
+                    st.caption("または列を指定して読み込み:")
                     if st.radio("形式", ["縦持ち (Long)", "横持ち (Wide)"]).startswith("縦"):
                         cols = df.columns.tolist()
                         c_grp = st.selectbox("Group列", cols, index=0); c_val = st.selectbox("Value列", [c for c in cols if c!=c_grp], index=len(cols)-1 if len(cols)>1 else 0)
@@ -547,7 +596,7 @@ if analysis_mode.startswith("1要因"):
                         
                 if st.session_state.csv_data_cache_jp:
                     data_dict.update(st.session_state.csv_data_cache_jp)
-                    st.success(f"{len(data_dict)}群のデータをロード済み")
+                    st.success(f"現在ロード中: {list(data_dict.keys())}")
                     if st.button("クリアしてリセット"):
                         st.session_state.csv_data_cache_jp = {}
                         st.rerun()
