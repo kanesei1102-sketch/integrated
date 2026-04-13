@@ -185,6 +185,8 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
     fig_w = max(6.0, len(data_dict) * base_width_per_group * config['spacing'])
     
     fig, ax = plt.subplots(figsize=(fig_w, config['height']))
+    # --- TICK DIRECTION FIX: POINT INWARD ---
+    ax.tick_params(direction='in', top=False, right=False, which='both')
     
     all_flat = [x for sub in all_values for x in sub]
     max_v = max(all_flat) if all_flat else 1
@@ -285,6 +287,8 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
     fig_w = max(6.0, n_major * base_width_per_major * config['spacing'])
     
     fig, ax = plt.subplots(figsize=(fig_w, config['height']))
+    # --- TICK DIRECTION FIX: POINT INWARD ---
+    ax.tick_params(direction='in', top=False, right=False, which='both')
     
     w = config['bar_width']
     
