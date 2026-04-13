@@ -186,6 +186,9 @@ def draw_matplotlib_1factor(data_dict, sig_pairs, config, is_norm):
     
     fig, ax = plt.subplots(figsize=(fig_w, config['height']))
     
+    # --- TICK DIRECTION FIX: POINT INWARD ---
+    ax.tick_params(direction='in', top=False, right=False, which='both')
+    
     all_flat = [x for sub in all_values for x in sub]
     max_v = max(all_flat) if all_flat else 1
     pos_vals = [x for x in all_flat if x > 0]
@@ -285,6 +288,9 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
     fig_w = max(6.0, n_major * base_width_per_major * config['spacing'])
     
     fig, ax = plt.subplots(figsize=(fig_w, config['height']))
+    
+    # --- TICK DIRECTION FIX: POINT INWARD ---
+    ax.tick_params(direction='in', top=False, right=False, which='both')
     
     w = config['bar_width']
     
@@ -388,14 +394,13 @@ def draw_matplotlib_2factor(df_raw, grouped_data, sig_res_map, config, sub_names
     return fig
 
 # ---------------------------------------------------------
-# 2. Sidebar Settings (Japanese)
+# 3. Sidebar Settings (Japanese)
 # ---------------------------------------------------------
 with st.sidebar:
     st.markdown("### [重要：論文等での使用について]")
     st.warning("""
     **研究成果として論文発表等を予定されていますか？**
-    本ツールはベータ版です。学術目的で使用される場合は、**事前に開発者（金子）までご連絡ください。**
-    共著者への追加や謝辞（Acknowledgments）への記載について相談させていただきます。
+    本ツールはベータ版です。学術目的で使用される場合は、**事前に開発者までご連絡ください。**
     👉 **[お問い合わせフォーム](https://forms.gle/xgNscMi3KFfWcuZ1A)**
     """)
     st.divider()
@@ -444,9 +449,9 @@ with st.sidebar:
         jitter = st.slider("散らばり (Jitter)", 0.0, 1.0, 0.2)
 
 # ---------------------------------------------------------
-# 3. Main Area: Data Input
+# 4. Main Area: Data Input
 # ---------------------------------------------------------
-st.title("🔬 Ultimate Sci-Stat & Graph Engine V14 (日本語版)")
+st.title("🔬 Ultimate Sci-Stat & Graph Engine V14")
 
 plot_config = {
     'mode': graph_mode_ui, 'manual_type': manual_graph_type, 'scale': scale_option,
@@ -458,15 +463,9 @@ plot_config = {
 data_dict = {}
 grouped_data = {}
 
-# === 1-Factor Input ===
 if analysis_mode.startswith("1要因"):
-    st.caption("単一条件下での複数群比較を行います。")
     t1, t2 = st.tabs(["✍️ 手動入力", "📂 CSVアップロード"])
-    
-    
-    if 'csv_data_cache' not in st.session_state:
-        st.session_state.csv_data_cache = {}
-
+    if 'csv_data_cache' not in st.session_state: st.session_state.csv_data_cache = {}
     with t1:
         if 'g_cnt' not in st.session_state: st.session_state.g_cnt = 3
         c1, c2 = st.columns([1,5])
@@ -479,71 +478,43 @@ if analysis_mode.startswith("1要因"):
                 raw = st.text_area(f"数値 {i+1}", key=f"d{i}")
                 v = parse_vals(raw); 
                 if v: data_dict[name] = v
-                
     with t2:
         up = st.file_uploader("CSVファイル", type="csv")
         if up:
             try:
-                df = pd.read_csv(up)
-                st.write("プレビュー:", df.head(3))
-                
-                
-                fmt = st.radio("データ形式", ["ロング形式 (縦持ち: Group列とValue列)", "ワイド形式 (横持ち: 各列がグループ)"])
-                
+                df = pd.read_csv(up); fmt = st.radio("データ形式", ["ロング形式", "ワイド形式"])
                 if fmt.startswith("ロング"):
-                    cols = df.columns.tolist()
-                    c_grp = st.selectbox("グループ列", cols)
+                    cols = df.columns.tolist(); c_grp = st.selectbox("グループ列", cols)
                     c_val = st.selectbox("数値列", [c for c in cols if c!=c_grp])
-                    
-                    
-                    if st.button("データを読み込む"):
-                        temp_data = {}
+                    if st.button("読み込む"):
+                        temp = {}
                         for g in df[c_grp].unique():
                             v = df[df[c_grp]==g][c_val].dropna().tolist()
-                            clean = [float(x) for x in v if str(x).replace('.','').isdigit()]
-                            if clean: temp_data[g] = clean
-                        st.session_state.csv_data_cache = temp_data # 保存
-                        
+                            if v: temp[g] = [float(x) for x in v]
+                        st.session_state.csv_data_cache = temp
                 else:
                     num_cols = df.select_dtypes(include=[np.number]).columns
                     sel = st.multiselect("列を選択", num_cols, default=list(num_cols)[:3])
-                    
-                    
-                    if st.button("データを読み込む"):
-                        temp_data = {}
+                    if st.button("読み込む"):
+                        temp = {}
                         for c in sel:
-                            v = df[c].dropna().tolist(); 
-                            if v: temp_data[c] = v
-                        st.session_state.csv_data_cache = temp_data 
-
-                
+                            v = df[c].dropna().tolist()
+                            if v: temp[c] = v
+                        st.session_state.csv_data_cache = temp
                 if st.session_state.csv_data_cache:
-                    st.success("CSVからデータを読み込みました！")
                     data_dict.update(st.session_state.csv_data_cache)
-                    
-                    
-                    if st.button("CSVデータをクリア"):
-                        st.session_state.csv_data_cache = {}
-                        st.rerun()
-                        
+                    if st.button("クリア"): st.session_state.csv_data_cache = {}; st.rerun()
             except Exception as e: st.error(str(e))
-
-# === 2-Factor Input ===
 else:
-    st.caption("2要因の交互作用分析 (要因A × 要因B)")
     c1, c2 = st.columns(2)
     with c1:
-        mj_str = st.text_area("要因A (X軸) *改行区切り", "DMSO\nDrug_X\nDrug_Y", height=100)
-        mj_grps = [x.strip() for x in mj_str.split('\n') if x.strip()]
+        mj_str = st.text_area("要因A (X軸)", "DMSO\nDrug_X", height=100); mj_grps = [x.strip() for x in mj_str.split('\n') if x.strip()]
     with c2:
         if 'sub_cnt' not in st.session_state: st.session_state.sub_cnt = 2
         sc1, sc2 = st.columns(2)
         if sc1.button("＋サブグループ"): st.session_state.sub_cnt += 1
         if sc2.button("－削除"): st.session_state.sub_cnt = max(2, st.session_state.sub_cnt - 1)
-        sub_names = []
-        for i in range(st.session_state.sub_cnt):
-            sub_names.append(st.text_input(f"Sub {i+1}", f"Sub {i+1}", key=f"s{i}"))
-    st.divider()
+        sub_names = [st.text_input(f"Sub {i+1}", f"Sub {i+1}", key=f"s{i}") for i in range(st.session_state.sub_cnt)]
     if mj_grps and sub_names:
         tabs = st.tabs(mj_grps)
         for i, m in enumerate(mj_grps):
@@ -552,33 +523,26 @@ else:
                 cols = st.columns(len(sub_names))
                 for j, s in enumerate(sub_names):
                     with cols[j]:
-                        raw = st.text_area(f"{s}", key=f"d2_{i}_{j}")
-                        v = parse_vals(raw); 
+                        raw = st.text_area(f"{s}", key=f"d2_{i}_{j}"); v = parse_vals(raw)
                         if v: grouped_data[m][s] = v
 
-# ---------------------------------------------------------
-# 4. Color Settings
-# ---------------------------------------------------------
 with st.sidebar:
     with st.expander("🖍️ 配色設定", expanded=True):
         defs = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", "#19D3F3"]
         if analysis_mode.startswith("1要因") and data_dict:
-            for i, k in enumerate(data_dict.keys()):
-                plot_config['colors'][k] = st.color_picker(k, defs[i%len(defs)])
+            for i, k in enumerate(data_dict.keys()): plot_config['colors'][k] = st.color_picker(k, defs[i%len(defs)])
         elif analysis_mode.startswith("2要因") and 'sub_names' in locals():
-            for i, k in enumerate(sub_names):
-                plot_config['colors'][k] = st.color_picker(k, defs[i%len(defs)])
+            for i, k in enumerate(sub_names): plot_config['colors'][k] = st.color_picker(k, defs[i%len(defs)])
 
 # ---------------------------------------------------------
 # 5. Execution (Report & Draw)
 # ---------------------------------------------------------
 if analysis_mode.startswith("1要因"):
     if len(data_dict) >= 2 and check_data_validity(data_dict.values()):
-        # Calc & Context
         p_val, method, is_norm, ctx = auto_select_test(list(data_dict.values()))
         st.success(f"解析完了: {method}")
         
-        # --- Report Logic ---
+        # --- Full Detailed Report Logic (RESTORED) ---
         easy_reason = ""
         if ctx["all_normal"] and ctx["is_equal_var"]:
             easy_reason = "データの分布に著しい偏りがなく、等分散性が棄却されなかったため、統計的検定力の高い標準的な「パラメトリック検定」が選択されました。"
@@ -587,33 +551,23 @@ if analysis_mode.startswith("1要因"):
         else:
             easy_reason = "正規性は棄却されませんでしたが、等分散性が棄却されました。そのため、分散が等しくない場合でも頑健な手法が選択されました。"
 
-        if ctx["small_n"]:
-            easy_reason += "\n   ※ サンプルサイズが小さい群が含まれるため、分布の判定は限定的です。"
+        norm_res_text = "有意な偏りなし" if ctx["all_normal"] else "非正規性が示唆される"
+        var_res_text = "等分散性は棄却されず" if ctx["is_equal_var"] else "等分散性は棄却された"
 
-        result_summary = "【有意差あり】" if p_val < 0.05 else "【有意差なし】"
-        conclusion_text = "本データセットにおいて群間に統計的に有意な差が認められました。少なくとも一部の群間で平均値（または中央値）が異なることが示唆されます。" if p_val < 0.05 else "本データセットにおいて群間に統計的に有意な差は認められませんでした。平均値の明確な違いは確認できません。"
-
-        norm_res_text = "有意な偏りなし (棄却されず)" if ctx["all_normal"] else "非正規性が示唆される (棄却)"
-        if ctx["small_n"]: norm_res_text += " *参考値 (n<3)"
-        var_res_text = "等分散性は棄却されず (Not Rejected)" if ctx["is_equal_var"] else "等分散性は棄却された (Rejected)"
-
-        analysis_path = f"""
+        with st.expander("📝 そのまま使えるレポート案 (詳細)", expanded=True):
+            full_report = f"""
+【解析レポート: {", ".join(data_dict.keys())} の比較】
 【統計手法の選定プロセス (自動診断)】
 1. 正規性検定 (Shapiro-Wilk): {norm_res_text}
 2. 等分散性検定 (Levene): {var_res_text}
 ⇒ 上記の診断に基づき、**{method}** が採用されました。
-"""
-        
-        with st.expander("📝 そのまま使えるレポート案 (詳細)", expanded=True):
-            full_report = f"""
-【解析レポート: {", ".join(data_dict.keys())} の比較】{analysis_path}
 
 1. 検定手法の選定理由:
    手法: {method}
    理由: {easy_reason}
 
 2. 解析結果:
-   判定: {result_summary}
+   判定: {"【有意差あり】" if p_val < 0.05 else "【有意差なし】"}
    全体のP値: {p_val:.4e}
    (有意水準 α=0.05)
 
@@ -621,60 +575,38 @@ if analysis_mode.startswith("1要因"):
    {"多重比較検定が行われ、有意差はグラフに反映されています。" if len(data_dict) > 2 else "2群間の直接比較が行われました。"}
 
 4. 結論:
-   {conclusion_text}
+   { "本データセットにおいて群間に統計的に有意な差が認められました。" if p_val < 0.05 else "本データセットにおいて群間に統計的に有意な差は認められませんでした。" }
             """
-            st.text_area("レポート全文", value=full_report, height=400)
+            st.text_area("レポート全文", value=full_report, height=350)
             
-        with st.expander("📄 論文用 'Methods' セクション案 (英語/日本語)", expanded=False):
+        with st.expander("📄 論文用 'Methods' セクション案", expanded=False):
             methods_text = f"""
 [Japanese]
-統計解析にはPythonおよびSciPyライブラリを使用した。
-データの正規性はShapiro-Wilk検定、等分散性はLevene検定により評価した。
-群間比較には{method}を用いた。
-{f"(事後検定: {ctx['posthoc']})" if len(data_dict) > 2 else ""}
-P値 0.05未満を統計的有意差ありと判定した。
+統計解析にはPythonおよびSciPyライブラリを使用した。データの正規性はShapiro-Wilk検定、等分散性はLevene検定により評価した。群間比較には{method}を用いた。P値 0.05未満を統計的有意差ありと判定した。
 
 [English]
-Statistical analyses were performed using Python with the SciPy library.
-Normality of data was assessed using the Shapiro-Wilk test, and homogeneity of variance was assessed using Levene's test.
-Comparisons between groups were determined using {method}.
-{f"(Post-hoc analysis: {ctx['posthoc']})" if len(data_dict) > 2 else ""}
-A P-value of less than 0.05 was considered statistically significant.
+Statistical analyses were performed using Python with the SciPy library. Normality of data was assessed using the Shapiro-Wilk test, and homogeneity of variance was assessed using Levene's test. Comparisons between groups were determined using {method}. A P-value of less than 0.05 was considered statistically significant.
             """
-            st.text_area("Methods案", value=methods_text, height=250)
+            st.text_area("Methods案", value=methods_text, height=200)
 
-        # Posthoc
+        # Posthoc calculation
         sig_pairs = []
         grps = list(data_dict.keys()); vals = list(data_dict.values())
         if p_val < 0.05:
             if len(data_dict)==2:
                 sig_pairs.append({'g1': grps[0], 'g2': grps[1], 'label': get_sig_label(p_val)})
             elif "ANOVA" in method:
-                flat_d = [x for sub in vals for x in sub]
-                flat_l = [n for n, sub in data_dict.items() for _ in sub]
+                flat_d = [x for sub in vals for x in sub]; flat_l = [n for n, sub in data_dict.items() for _ in sub]
                 tuk = pairwise_tukeyhsd(flat_d, flat_l)
                 for _, r in pd.DataFrame(data=tuk._results_table.data[1:], columns=tuk._results_table.data[0]).iterrows():
                     if r['reject']: sig_pairs.append({'g1': r['group1'], 'g2': r['group2'], 'label': get_sig_label(r['p-adj'])})
-            elif HAS_POSTHOCS:
-                dunn = sp.posthoc_dunn(vals, p_adjust='bonferroni')
-                dunn.columns = grps; dunn.index = grps
-                for i in range(len(grps)):
-                    for j in range(i+1, len(grps)):
-                        if dunn.iloc[i, j] < 0.05:
-                            sig_pairs.append({'g1': grps[i], 'g2': grps[j], 'label': get_sig_label(dunn.iloc[i, j])})
-            else:
-                st.warning("scikit-posthocsがインストールされていません。代替ロジック(Bonferroni-MannWhitney)を実行します。")
-                sig_pairs = run_fallback_posthoc(vals, grps)
+            else: sig_pairs = run_fallback_posthoc(vals, grps)
         
-        # Draw (Matplotlib)
         try:
-            fig = draw_matplotlib_1factor(data_dict, sig_pairs, plot_config, is_norm)
-            st.pyplot(fig)
+            fig = draw_matplotlib_1factor(data_dict, sig_pairs, plot_config, is_norm); st.pyplot(fig)
             buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
             st.download_button("📥 画像を保存 (PNG)", buf, file_name="result.png", mime="image/png")
         except Exception as e: st.error(f"Plot Error: {e}")
-    else: st.info("データを入力してください。")
-
 else: # 2-Factor
     if len(grouped_data) > 0:
         rows = []
@@ -682,63 +614,30 @@ else: # 2-Factor
             for s, v in sub.items():
                 for x in v: rows.append({'A': m, 'B': s, 'Val': x})
         df_a = pd.DataFrame(rows)
-        
         if not df_a.empty:
-            st.header("解析結果")
             try:
-                model = ols('Val ~ C(A) * C(B)', data=df_a).fit()
-                res = sm.stats.anova_lm(model, typ=2)
+                model = ols('Val ~ C(A) * C(B)', data=df_a).fit(); res = sm.stats.anova_lm(model, typ=2)
                 p_int = res.loc['C(A):C(B)', 'PR(>F)']
-                with st.expander("📊 分散分析表 (ANOVA Table)", expanded=False):
+                with st.expander("📊 分散分析表", expanded=False):
                     st.write(res)
-                    st.info(f"交互作用 (Interaction): **{'あり' if p_int < 0.05 else 'なし'}** (P={p_int:.4f})")
-                    fig_i, ax_i = plt.subplots()
-                    interaction_plot(x=df_a['A'], trace=df_a['B'], response=df_a['Val'], ax=ax_i)
-                    st.pyplot(fig_i)
-            except: st.warning("ANOVAの計算に失敗しました。データを確認してください。")
-
-            st.subheader("単純主効果 (層別解析)")
-            sig_res_map = {}
-            report_text = ""
-            
-            for m, sub in grouped_data.items():
-                s_keys = list(sub.keys()); s_vals = list(sub.values())
-                if not check_data_validity(s_vals): continue
+                    st.info(f"交互作用: {'あり' if p_int < 0.05 else 'なし'} (P={p_int:.4f})")
+                    fig_i, ax_i = plt.subplots(); interaction_plot(x=df_a['A'], trace=df_a['B'], response=df_a['Val'], ax=ax_i); st.pyplot(fig_i)
                 
-                p, method, _, _ = auto_select_test(s_vals)
-                report_text += f"- **{m}**: P={p:.4f} ({method})\n"
-                
-                sig_res_map[m] = []
-                if p < 0.05:
-                    if len(s_vals) == 2:
-                        sig_res_map[m].append({'g1': s_keys[0], 'g2': s_keys[1], 'label': get_sig_label(p)})
-                    elif "ANOVA" in method:
-                        flat_d = [x for sub in s_vals for x in sub]
-                        flat_l = [n for n, sub in zip(s_keys, s_vals) for _ in sub]
-                        tuk = pairwise_tukeyhsd(flat_d, flat_l)
-                        for _, r in pd.DataFrame(data=tuk._results_table.data[1:], columns=tuk._results_table.data[0]).iterrows():
-                            if r['reject']: sig_res_map[m].append({'g1': r['group1'], 'g2': r['group2'], 'label': get_sig_label(r['p-adj'])})
-                    else:
-                        if HAS_POSTHOCS:
-                            dunn = sp.posthoc_dunn(s_vals, p_adjust='bonferroni')
-                            dunn.columns = s_keys; dunn.index = s_keys
-                            for i in range(len(s_keys)):
-                                for j in range(i+1, len(s_keys)):
-                                    if dunn.iloc[i, j] < 0.05:
-                                        sig_res_map[m].append({'g1': s_keys[i], 'g2': s_keys[j], 'label': get_sig_label(dunn.iloc[i, j])})
-                        else:
-                            sig_res_map[m] = run_fallback_posthoc(s_vals, s_keys)
-            
-            st.markdown(report_text)
-
-            # Draw (Matplotlib)
-            try:
-                fig = draw_matplotlib_2factor(df_a, grouped_data, sig_res_map, plot_config, sub_names)
-                st.pyplot(fig)
-                buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
-                st.download_button("📥 画像を保存 (PNG)", buf, file_name="result_2way.png", mime="image/png")
-            except Exception as e: st.error(f"Plot Error: {e}")
-    else: st.info("データを入力してください。")
+                sig_res_map = {}
+                for m, sub in grouped_data.items():
+                    s_keys = list(sub.keys()); s_vals = list(sub.values())
+                    if not check_data_validity(s_vals): continue
+                    p, method, _, _ = auto_select_test(s_vals)
+                    sig_res_map[m] = []
+                    if p < 0.05:
+                        if len(s_vals) == 2: sig_res_map[m].append({'g1': s_keys[0], 'g2': s_keys[1], 'label': get_sig_label(p)})
+                        elif "ANOVA" in method:
+                            flat_d = [x for sv in s_vals for x in sv]; flat_l = [n for n, sv in zip(s_keys, s_vals) for _ in sv]
+                            tuk = pairwise_tukeyhsd(flat_d, flat_l)
+                            for _, r in pd.DataFrame(data=tuk._results_table.data[1:], columns=tuk._results_table.data[0]).iterrows():
+                                if r['reject']: sig_res_map[m].append({'g1': r['group1'], 'g2': r['group2'], 'label': get_sig_label(r['p-adj'])})
+                fig = draw_matplotlib_2factor(df_a, grouped_data, sig_res_map, plot_config, sub_names); st.pyplot(fig)
+            except Exception as e: st.error(str(e))
 
 # ---------------------------------------------------------
 # 6. Sidebar Footer: Disclaimer (Japanese)
