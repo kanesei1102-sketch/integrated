@@ -687,7 +687,7 @@ else: # 2-Factor
                 for x in v: rows.append({'A': m, 'B': s, 'Val': x})
         df_a = pd.DataFrame(rows)
         
-if not df_a.empty:
+        if not df_a.empty:
             try:
                 # 統計モデルの構築と計算
                 model = ols('Val ~ C(A) * C(B)', data=df_a).fit()
