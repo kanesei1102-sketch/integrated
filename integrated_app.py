@@ -687,12 +687,44 @@ else: # 2-Factor
                 for x in v: rows.append({'A': m, 'B': s, 'Val': x})
         df_a = pd.DataFrame(rows)
         
-        if not df_a.empty:
-            st.header("解析結果")
+if not df_a.empty:
             try:
+                # 統計モデルの構築と計算
                 model = ols('Val ~ C(A) * C(B)', data=df_a).fit()
                 res = sm.stats.anova_lm(model, typ=2)
                 p_int = res.loc['C(A):C(B)', 'PR(>F)']
+                p_a = res.loc['C(A)', 'PR(>F)']
+                p_b = res.loc['C(B)', 'PR(>F)']
+                
+                # 前提条件の診断用計算
+                res_norm = stats.shapiro(model.resid)[1]
+                all_groups_vals = [df_a[(df_a['A']==m) & (df_a['B']==s)]['Val'].tolist() for m in mj_grps for s in sub_names]
+                res_levene = stats.levene(*[v for v in all_groups_vals if len(v)>=2])[1]
+                
+                # --- ここから詳細レポート表示 ---
+                with st.expander("📝 二元配置分散分析 詳細レポート案", expanded=True):
+                    st.markdown(f"""
+【二元配置分散分析 (Two-way ANOVA) 詳細レポート】
+対象要因: A ({", ".join(mj_grps)}) × B ({", ".join(sub_names)})
+
+1. 前提条件の診断:
+   - 正規性検定 (残差のShapiro-Wilk): P={res_norm:.4f} ({"正規性を維持" if res_norm > 0.05 else "非正規性の疑いあり"})
+   - 等分散性検定 (Levene): P={res_levene:.4f} ({"等分散性は維持" if res_levene > 0.05 else "不等分散の疑いあり"})
+   ⇒ 二元配置分散分析を実行しました。
+
+2. 解析結果サマリー:
+   - 要因A 主効果: P = {p_a:.4e} ({"有意差あり" if p_a < 0.05 else "有意差なし"})
+   - 要因B 主効果: P = {p_b:.4e} ({"有意差あり" if p_b < 0.05 else "有意差なし"})
+   - 交互作用 (A×B): P = {p_int:.4e} ({"有意差あり" if p_int < 0.05 else "有意差なし"})
+
+3. 結論と解釈:
+   {"交互作用が有意であるため、要因Aの効果は要因Bの状態によって変化します。" if p_int < 0.05 else "交互作用は有意ではなく、各要因は独立して影響を及ぼしています。"}
+   {"このため、各水準における「単純主効果（層別解析）」を優先して解釈する必要があります。" if p_int < 0.05 else "各主効果の判定に基づいた結論を導出してください。"}
+                    """)
+                    
+                    st.text_area("Methods案 (2-way)", f"[English] Two-way analysis of variance (ANOVA) was used to assess the interaction between {mj_grps} and {sub_names}. Significant interactions were further analyzed for simple main effects. P < 0.05 was considered significant.\n\n[Japanese] {mj_grps}と{sub_names}の交互作用を評価するため二元配置分散分析を用いた。交互作用が有意な場合は単純主効果を検定した。P<0.05を有意とした。", height=150)
+                # --- レポート表示ここまで ---
+
                 with st.expander("📊 分散分析表 (ANOVA Table)", expanded=False):
                     st.write(res)
                     st.info(f"交互作用 (Interaction): **{'あり' if p_int < 0.05 else 'なし'}** (P={p_int:.4f})")
