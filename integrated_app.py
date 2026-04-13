@@ -774,7 +774,7 @@ if not df_a.empty:
                 buf = io.BytesIO(); fig.savefig(buf, format='png', bbox_inches='tight', dpi=300)
                 st.download_button("📥 画像を保存 (PNG)", buf, file_name="result_2way.png", mime="image/png")
             except Exception as e: st.error(f"Plot Error: {e}")
-    else: st.info("データを入力してください。")
+else: st.info("データを入力してください。")
 
 # ---------------------------------------------------------
 # 6. Sidebar Footer: Disclaimer (Japanese)
